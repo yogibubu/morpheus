@@ -1,0 +1,17 @@
+severity,code,message,context
+info,validation_refit_condition_increase,A robustness refit is substantially less well conditioned than the reference fit.,leave_predicate_group_out:leave_out_BDPCS3_bond_distance;condition_number=736.277
+info,stress_geometry_shift,A robustness refit changed the final geometry beyond the RMSD reporting threshold.,leave_predicate_group_out:leave_out_BDPCS3_bond_distance;rmsd_A=0.00403758
+info,stress_atom_shift,A robustness refit moved at least one atom beyond the displacement reporting threshold.,leave_predicate_group_out:leave_out_BDPCS3_bond_distance;max_atom_shift_A=0.00578435
+warning,validation_refit_not_minimum,A robustness refit did not end at a strict minimum.,leave_predicate_group_out:leave_out_BDPCS3_CH_bond_distance;stationary_point=flat_or_rank_deficient
+warning,validation_refit_rank_loss,A robustness refit has lower numerical rank than the reference fit.,leave_predicate_group_out:leave_out_BDPCS3_CH_bond_distance;rank=68;reference_rank=75
+info,stress_geometry_shift,A robustness refit changed the final geometry beyond the RMSD reporting threshold.,leave_predicate_group_out:leave_out_BDPCS3_CH_bond_distance;rmsd_A=0.0859952
+info,stress_atom_shift,A robustness refit moved at least one atom beyond the displacement reporting threshold.,leave_predicate_group_out:leave_out_BDPCS3_CH_bond_distance;max_atom_shift_A=0.234496
+info,stress_geometry_shift,A robustness refit changed the final geometry beyond the RMSD reporting threshold.,leave_predicate_group_out:leave_out_BDPCS3_angle_angle;rmsd_A=0.00292621
+info,stress_atom_shift,A robustness refit moved at least one atom beyond the displacement reporting threshold.,leave_predicate_group_out:leave_out_BDPCS3_angle_angle;max_atom_shift_A=0.0137445
+info,validation_refit_condition_increase,A robustness refit is substantially less well conditioned than the reference fit.,leave_predicate_group_out:leave_out_BDPCS3_H_angle_angle;condition_number=248391
+info,stress_geometry_shift,A robustness refit changed the final geometry beyond the RMSD reporting threshold.,leave_predicate_group_out:leave_out_BDPCS3_H_angle_angle;rmsd_A=0.303904
+info,stress_atom_shift,A robustness refit moved at least one atom beyond the displacement reporting threshold.,leave_predicate_group_out:leave_out_BDPCS3_H_angle_angle;max_atom_shift_A=0.934693
+warning,validation_refit_not_converged,A robustness refit reached the iteration limit.,leave_predicate_group_out:leave_out_BDPCS3_H_dihedral_dihedral;condition_number=111769
+info,validation_refit_condition_increase,A robustness refit is substantially less well conditioned than the reference fit.,leave_predicate_group_out:leave_out_BDPCS3_H_dihedral_dihedral;condition_number=111769
+info,stress_geometry_shift,A robustness refit changed the final geometry beyond the RMSD reporting threshold.,leave_predicate_group_out:leave_out_BDPCS3_H_dihedral_dihedral;rmsd_A=0.181144
+info,stress_atom_shift,A robustness refit moved at least one atom beyond the displacement reporting threshold.,leave_predicate_group_out:leave_out_BDPCS3_H_dihedral_dihedral;max_atom_shift_A=0.44731

@@ -26,15 +26,15 @@
 
 \begin{abstract}
 
-Semiexperimental equilibrium structures combine high-resolution rotational spectroscopy with computed vibrational and electronic corrections. The least-squares solution of a refinement model is now routine; its construction remains far less formalized. Active coordinates, symmetry, weakly determined directions, constraints, and parameter classes are still often selected by expert intervention, especially for cyclic, fused, and bridged molecular graphs.
+Semiexperimental equilibrium structures combine high-resolution rotational spectroscopy with computed vibrational and electronic corrections. The numerical solution of a least-squares refinement is now routine; the chemically decisive step is often the earlier one, namely the construction and validation of the inverse model that connects precise observables with structural parameters. Active coordinates, symmetry, weakly determined directions, constraints, predicates, and parameter classes are still frequently selected by expert intervention, especially for cyclic, fused, and bridged molecular graphs.
 
-This paper introduces \texttt{MORPHEUS} (Model Optimization and Refinement from Perceived Hierarchy, Equivalence, Uncertainty, and Symmetry), a framework that turns model formulation into an auditable topology-perception problem. The semiexperimental refinements reported here provide the principal validation, but the underlying construction is more general: it provides an algorithmic route to build constrained refinement models from topology, symmetry, rank, and external reference information before any numerical least-squares solution is attempted. The resulting models are fully generated from the perceived molecular graph, made symmetry- and rank-consistent, and recorded through an explicit audit trail. Molecular topology defines the primitive coordinate space, symmetry selects the admissible active subspace, isotopic coverage determines which directions are experimentally supported, and electronic-structure reference information enters only through explicit constraints, predicates, or parameter classes.
+This paper introduces \texttt{MORPHEUS} (Model Optimization and Refinement from Perceived Hierarchy, Equivalence, Uncertainty, and Symmetry), a framework that turns model formulation into an auditable topology-perception problem. The semiexperimental refinements reported here provide the principal validation, but the construction is more general: it builds constrained refinement models from topology, symmetry, rank, isotope coverage, and external reference information before any numerical least-squares solution is attempted. Molecular topology defines the primitive coordinate space, symmetry selects the admissible active subspace, isotopic coverage determines which directions are experimentally supported, and electronic-structure reference information enters only through explicit primitive-coordinate constraints, predicates, or parameter classes.
 
-Two equivalent active spaces are available: symmetry-adapted generalized internal coordinates built from homogeneous primitive families, and symmetry-adapted Cartesian displacements after removal of translations and rotations. The chemical interface remains internal-coordinate based: constraints, predicates, and parameter classes are expressed as primitive bond, angle, dihedral, out-of-plane, ring, or local-frame relations and then projected onto the selected active basis. Validation on acyclic, cyclic, planar, fused, bridged, and flexible benchmark systems shows that the same rank, effective dimension, and rotational residuals are obtained without manual coordinate-model formulation, while the final structural parameters and their uncertainties remain chemically interpretable. The testosterone case study further demonstrates that accurate quantum chemical equilibrium geometries, accelerated vibrational corrections, and algorithmically generated topology-constrained refinement models extend semiexperimental refinement to molecular systems containing about 50 atoms, for which the isotopologue-rich experimental datasets required by conventional refinement strategies are generally unavailable.
+Two equivalent active spaces are available: symmetry-adapted generalized internal coordinates built from homogeneous primitive families, and symmetry-adapted Cartesian displacements after removal of translations and rotations. The chemical interface remains internal-coordinate based, so bond, angle, dihedral, out-of-plane, ring, and local-frame relations have the same meaning whichever numerical basis is used. Validation on acyclic, cyclic, planar, fused, bridged, and flexible systems shows that rank, effective dimension, residuals, structural parameters, and propagated uncertainties are reproduced without manual coordinate-model formulation. A camphor stress test makes the distinction between solving and validating the model explicit: the accepted no-Kraitchman BDPCS3-predicate model gives sub-milliangstrom bond corrections, whereas superficially competitive variants based on unsupported hydrogen directions or tight Kraitchman predicates are rejected because they distort the geometry. The testosterone case study then shows that accurate quantum chemical equilibrium geometries, accelerated vibrational corrections, and algorithmically generated topology-constrained refinement models can be chained for molecular systems containing about 50 atoms, where isotope-rich data sets required by conventional refinement strategies are generally unavailable.
 
 \end{abstract}
 
-\keywords{semiexperimental equilibrium structures, rotational spectroscopy, generalized internal coordinates, least squares, Kraitchman equations}
+\keywords{semiexperimental equilibrium structures, model validation, generalized internal coordinates, topology-constrained refinement, Kraitchman equations}
 
 \maketitle
 
@@ -692,13 +692,16 @@ their absolute values with the fitted coordinates in the parent principal-axis
 frame. Kraitchman coordinates are widely used in spectroscopic structure work,
 either directly as $r_s$ substitution coordinates, as checks on $r_0$ or
 semiexperimental structures, or as practical atom-assignment diagnostics. In
-this workflow they are intentionally kept outside the least-squares objective:
-they are useful checks, but they do not retain coordinate signs and do not
-exploit the full correlated model. At the same experimental-information level
-and computational cost, the SE+fit route is therefore more informative because
+the present workflow they are treated as diagnostics by default. They may be
+converted into soft predicates only as explicit, weighted external structural
+information, and only if the resulting predicate set survives the same
+stability tests as any other reduced-dimensionality model. This distinction is
+important because Kraitchman coordinates do not retain coordinate signs and do
+not exploit the full correlated model. At the same experimental-information
+level and computational cost, the SE+fit route is therefore more informative:
 all substituted constants enter one constrained Cartesian fit, uncertainties
-are propagated through the same model, and the omitted planar component can
-remain an external diagnostic.
+are propagated through the same model, and omitted or weak components can
+remain external diagnostics rather than hidden constraints.
 
 
 \section{Implementation and Reproducibility}
@@ -721,6 +724,16 @@ constraints/classes, sensitivity-advisor decisions when requested, provenance,
 warnings, and minimum-check Hessian eigenvalues. These outputs provide the
 audit trail for the algorithmically generated model and are the numerical
 source for the benchmark tables.
+
+The production report also records the final primitive parameters together
+with their starting values, final-minus-starting shifts, and propagated
+standard errors. A final-validation stage can replay the same accepted model
+with the alternate active coordinate basis, robust loss functions, predicate
+width scans, leave-predicate-group-out tests, random multistarts,
+leave-one-isotopologue checks, and predicate audits. These checks are not used
+to lower the residual. They test whether a proposed model is reproducible,
+well conditioned, and chemically stable under reasonable perturbations of the
+assumptions that made the inverse problem soluble.
 
 
 \section{Relationship to Existing Approaches}
@@ -811,20 +824,23 @@ corrections.
 
 \section{Results and Discussion}
 
-The systems analyzed in this work are shown in Figure \ref{fig:studied-structures}
-and are discussed in the order in which  they test increasingly demanding parts of
-the same model-generation problem. The results are therefore not independent
-case studies but a sequence of stress tests, each designed to validate one
-property of the framework. Glycolaldehyde establishes the acyclic baseline;
-cyclopentadiene tests ring closure; nitrobenzene tests planar-component
-selection; azulene tests fused aromatic topology; norcamphor tests bridged
-graphs and hydrogen-frame constraints. The anhydride series probes how
-published data sets with different isotopic completeness are converted into
-equivalent input models. Glycine I and II test reduced-dimensionality
-constraints. Testosterone is kept separate and last because it is a scale
-demonstration rather than an isotope-rich benchmark. In all cases the input is
-Cartesian and no molecule-specific coordinate code, manual reference tree, or
-manual active-space selection is used.
+The main benchmark systems are shown in
+Figure~\ref{fig:studied-structures} and are discussed in the order in which
+they test increasingly demanding parts of the same model-generation problem.
+The results are therefore not independent case studies but a sequence of
+stress tests, each designed to validate one property of the framework.
+Glycolaldehyde establishes the acyclic baseline; cyclopentadiene tests ring
+closure; nitrobenzene tests planar-component selection; azulene tests fused
+aromatic topology; norcamphor tests bridged graphs and hydrogen-frame
+constraints. The anhydride series probes how published data sets with
+different isotopic completeness are converted into equivalent input models.
+Glycine I and II test reduced-dimensionality constraints. Camphor is introduced
+as a focused model-validation stress test, because it separates a chemically
+admissible predicate model from alternatives that give attractive residuals
+but unacceptable structures. Testosterone is kept separate and last because it
+is a scale demonstration rather than an isotope-rich benchmark. In all cases
+the input is Cartesian and no molecule-specific coordinate code, manual
+reference tree, or manual active-space selection is used.
 
 \begin{figure*}
 \centering
@@ -1221,6 +1237,7 @@ System & GIC space & Variables & Generated constraints & Classes \\
 Glycine I & 24 GICs; 15 $A'$ & 11 & 4 QC constraints & none \\
 Glycine II & 24 GICs; C$_1$ & 19 & 5 QC constraints & coupled descriptors \\
 Norcamphor & 48 GICs; C$_1$ & 18 & 30 H-frame; 58 Kraitchman & constrained H frames \\
+Camphor & 75 GICs; C$_1$ & 75 & 178 BDPCS3 predicates; no Kraitchman & validation-controlled predicates \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -1237,12 +1254,56 @@ coverage and local-frame diagnostics rather than by point-group symmetry. The
 updated \texttt{xyzin} input uses the experimental constants of Table 3 of the
 norcamphor rotational study, the tabulated vibrational corrections, and
 Kraitchman-derived soft predicates generated from the singly substituted
-heavy-atom isotopologues. With 30 hydrogen-frame constraints and 58
-Kraitchman predicates, MORPHEUS obtains an 18-dimensional fit with a rotational
+heavy-atom isotopologues. The workflow uses 30 hydrogen-frame constraints and 58
+\mbox{Kraitchman predicates} to obtain an 18-dimensional fit with a rotational
 RMS residual of 0.094~MHz. This run illustrates the intended role of
 predicates: they stabilize directions not fully determined by isotope coverage
 without changing the generated GIC basis or converting probabilistic
 information into hard constraints.
+
+Camphor tests the complementary question: not whether unsupported directions
+can be stabilized, but whether a generated model can reject a tempting but
+chemically wrong stabilization. The accepted run uses 12 isotopologue records,
+36 rotational constants, a full-rank 75-variable GIC model, and 178 BDPCS3
+soft predicates; no hydrogen coordinate is frozen and no Kraitchman-derived
+predicate is retained in the least-squares objective. The rotational RMS
+residual is 0.0788~MHz, with a maximum absolute residual of 0.284~MHz. More
+importantly, the final structural correction to the BDPCS3 reference remains
+small on the chemically relevant scale: the largest bond-length shift is
+0.832~m\AA{}, the largest valence-angle shift is $0.040^\circ$, and the
+corresponding propagated standard errors are bounded by 3.000~m\AA{} and
+$0.257^\circ$.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\linewidth]{figures/camphor_validation_distributions.pdf}
+\caption{Camphor validation stress test. Panels A and B show the signed
+final-minus-BDPCS3 shifts for bond lengths and valence angles in the accepted
+no-Kraitchman model; the curves are normal distributions fitted to the signed
+shifts, and the shaded intervals indicate the mean propagated standard error.
+Panel C compares selected stability variants by the maximum structural
+deviation from the BDPCS3 reference. The accepted model and predicate-width
+perturbations remain in the sub-milliangstrom, few-hundredths-of-a-degree
+region, whereas models that remove hydrogen predicates or impose tight
+Kraitchman-derived predicates can yield superficially acceptable rotational
+residuals while distorting the geometry.}
+\label{fig:camphor-validation}
+\end{figure*}
+
+The validation suite makes this distinction quantitative. Replaying the same
+model in the symmetry-adapted Cartesian basis changes the aligned Cartesian
+structure by only $5.2\times 10^{-11}$~\AA{} RMS; robust-loss and multistart
+checks change it by less than $5\times10^{-4}$~\AA{} RMS, and predicate-width
+scans keep the maximum atomic displacement below $9.5\times10^{-4}$~\AA{}.
+By contrast, removing hydrogen-related predicates gives lower or comparable
+rotational residuals but shifts atoms by up to 0.935~\AA{}, and tight
+Kraitchman predicates produce bond and angle distortions up to 7.65~m\AA{}
+and $0.343^\circ$. Broad Kraitchman predicates are not damaging, but they do
+not add useful information to the validated BDPCS3-predicate model. The
+camphor example therefore shows the operational role of the advisor: it does
+not merely assemble a least-squares input, it proposes a chemically explicit
+model and then rejects variants that fail reproducibility, robustness, or
+structural-stability checks.
 
 \subsection{Glycine as an End-to-End Model-Generation Test}
 
@@ -1456,13 +1517,14 @@ XY QC predicates, 0.01~\AA{} & 7 & 3.114 & 0.755 & 0.531 \\
 
 \section{Conclusions}
 
-The central contribution of this work is a general framework for constructing
-constrained refinement models, demonstrated here through semiexperimental
-structure refinement. Existing refinement methods generally assume that
-the coordinate model has already been supplied; here topology perception,
-symmetry assignment, homogeneous rank pruning, constraint projection,
-least-squares solution, and covariance propagation are part of one calculation
-rather than separate user decisions.
+The central contribution of this work is a general framework for proposing and
+validating constrained refinement models, demonstrated here through
+semiexperimental structure refinement. Existing refinement methods generally
+assume that the coordinate model has already been supplied; here topology
+perception, symmetry assignment, homogeneous rank pruning, constraint
+projection, least-squares solution, covariance propagation, and final
+model-stability checks are part of one calculation rather than separate user
+decisions.
 
 The benchmarks show that the resulting models remain graph-defined,
 symmetry-consistent, rank-consistent, and non-redundant for acyclic, cyclic,
@@ -1483,12 +1545,23 @@ isotope coverage into explicit reduced-dimensionality constraints. The
 reference therefore supplies constraints for unsupported directions, while the
 spectroscopic data determine all supported directions.
 
+The camphor case adds the decisive validation step. A model with strict
+BDPCS3-derived C--H predicates and no Kraitchman predicates gives a
+sub-milliangstrom correction to the reference geometry and remains stable
+under coordinate-basis changes, robust losses, predicate-width scans, and
+multistarts. Alternative models that look numerically attractive from the
+rotational residual alone fail chemically when hydrogen predicates are removed
+or Kraitchman-derived restraints are made too tight. This is the practical
+reason for making model generation auditable: the residual is necessary, but
+it is not a sufficient certificate of a meaningful structure.
+
 This is not simply a convenient input generator. The final outputs remain
 ordinary chemical objects: Cartesian structures, bond lengths, valence angles,
 dihedrals, ring descriptors, propagated uncertainties, residuals, and
 diagnostics. What changes is that the path from topology and data to those
-objects is explicit, reproducible, and rank-audited, even for molecular graphs
-in which manual coordinate formulation is often the limiting step.
+objects is explicit, reproducible, rank-audited, and challenged by independent
+stability checks, even for molecular graphs in which manual coordinate
+formulation is often the limiting step.
 
 The testosterone scale check extends this logic to the current upper end of
 practical rotational-spectroscopic modeling. It does not claim a complete
@@ -1514,9 +1587,9 @@ information.
 Atom-numbered structures for the benchmark and companion systems; complete
 rotational-constant comparisons for glycine I, glycine II, cyclopentadiene,
 nitrobenzene, and azulene; Kraitchman, reference-fit, and planar-component
-diagnostics; additional diagnostic tables for glycolaldehyde and norcamphor;
-final Cartesian coordinates, propagated topological parameters, residuals, and
-archived \texttt{MORPHEUS} output files.
+diagnostics; additional diagnostic tables for glycolaldehyde, norcamphor, and
+camphor; final Cartesian coordinates, propagated topological parameters,
+residuals, and archived \texttt{MORPHEUS} output files.
 
 \section*{Code Availability}
 

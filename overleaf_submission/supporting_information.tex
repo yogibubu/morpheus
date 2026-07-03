@@ -128,6 +128,8 @@ Azulene & GICs & 48 & 17 & 10 & 10 & 956.7 & 0.0731/0.2900 \\
 Azulene & Sym. Cart. & 48 & 17 & 10 & 10 & 744.8 & 0.0731/0.2900 \\
 Norcamphor & GICs & 48 & 48 & 18 & 18 & 5199.2 & 0.0941/0.2629 \\
 Norcamphor & Sym. Cart. & 48 & 48 & 18 & 18 & 4216.7 & 0.0941/0.2629 \\
+Camphor & GICs & 75 & 75 & 75 & 75 & 71.3 & 0.0788/0.2839 \\
+Camphor & Sym. Cart. & 75 & 75 & 75 & 75 & 23.5 & 0.0788/0.2839 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -139,6 +141,43 @@ norcamphor rotational study, and the tabulated vibrational corrections.  The
 reported run adds 58 Kraitchman-derived soft predicates with
 $\sigma_R=0.003$~\AA{} and $\sigma_A=0.3^\circ$; the same predicate set gives
 the same residual with GIC and symmetry-adapted Cartesian working coordinates.
+
+The camphor rows report the accepted no-Kraitchman model described in
+Section~\ref{sec:si-camphor}. The same BDPCS3-predicate model was replayed
+with symmetry-adapted Cartesian working coordinates as a final-validation
+check, not as a separate manually constructed refinement.
+
+\section{Camphor Model-Validation Stress Test}
+\label{sec:si-camphor}
+
+The camphor data set is included to document the final validation layer rather
+than to add another ordinary benchmark. The accepted model uses the BDPCS3
+Cartesian geometry as the reference structure, 12 isotopologue records, the
+three principal moments for each isotopologue, and 178 BDPCS3 soft predicates.
+No hydrogen coordinate is fixed. C--H distances and hydrogen angles enter as
+strict soft predicates from the BDPCS3 reference, whereas Kraitchman-derived
+relations are retained only as diagnostics unless explicitly tested as
+additional predicates. The files needed to regenerate the tables are archived
+in \texttt{data/camphor}.
+
+\input{generated/camphor_geometry_statistics.tex}
+
+\input{generated/camphor_stability_controls.tex}
+
+\input{generated/camphor_final_validation.tex}
+
+\input{generated/camphor_kraitchman_comparison.tex}
+
+The final geometry table shows that the accepted model is a small correction
+to the BDPCS3 structure: the largest bond and valence-angle shifts are
+0.832~m\AA{} and $0.040^\circ$, respectively. The validation controls show why
+the lower residual obtained when hydrogen predicates are removed is not a
+better model: the rank is lost and the geometry moves by chemically
+unacceptable amounts. Similarly, tight Kraitchman-derived predicates distort
+the structure, while broad Kraitchman predicates are harmless but add no
+useful information beyond the validated BDPCS3-predicate model.
+
+\clearpage
 
 \begin{table}
 \caption{Legacy MSR/MSROT compatibility checks. For systems where manually
@@ -1013,6 +1052,7 @@ choices (symmetry-adapted internal or Cartesian coordinates, SAI and SAC,
 respectively) used for the benchmark calculations.}
 
 \smallskip
+\resizebox{\linewidth}{!}{%
 \begin{tabular}{lll}
 \toprule
 Case & Constraints & Coordinates \\
@@ -1023,6 +1063,7 @@ Nitrobenzene    & No fixed primitive constraints         & SAI, AB \\
 p-EBN           & Legacy frozen Z-matrix parameters      & SAI, AB \\
 Azulene         & C--H bond lengths and selected angles  & SAI, AB \\
 Norcamphor      & H-atom constraints and Kraitchman predicates & SAI and SAC, ABC \\
+Camphor         & BDPCS3 predicates; Kraitchman diagnostic only & SAI and SAC, ABC \\
 Glycine I       & Four generated QC-reference constraints        & SAI, ABC \\
 Glycine II      & Five generated QC constraints      & SAI, ABC \\
 Maleic anhydride & No fixed primitive constraints        & SAI and SAC, AB \\
@@ -1030,7 +1071,8 @@ Phthalic anhydride & Weighted $r_e^\mathrm{BO}$ predicates & SAI, AC \\
 Succinic anhydride & Fixed local H-frame parameters       & SAI, AC \\
 Testosterone & C--C class; C--C/C--O classes; QC predicates   & SAI, ABC \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{center}
 
 \end{document}
