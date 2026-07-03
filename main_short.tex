@@ -30,7 +30,7 @@ Semiexperimental equilibrium structures combine high-resolution rotational spect
 
 This paper introduces \texttt{MORPHEUS} (Model Optimization and Refinement from Perceived Hierarchy, Equivalence, Uncertainty, and Symmetry), a framework that turns model formulation into an auditable topology-perception problem. The semiexperimental refinements reported here provide the principal validation, but the construction is more general: it builds constrained refinement models from topology, symmetry, rank, isotope coverage, and external reference information before any numerical least-squares solution is attempted. Molecular topology defines the primitive coordinate space, symmetry selects the admissible active subspace, isotopic coverage determines which directions are experimentally supported, and electronic-structure reference information enters only through explicit primitive-coordinate constraints, predicates, or parameter classes.
 
-Two equivalent active spaces are available: symmetry-adapted generalized internal coordinates built from homogeneous primitive families, and symmetry-adapted Cartesian displacements after removal of translations and rotations. The chemical interface remains internal-coordinate based, so bond, angle, dihedral, out-of-plane, ring, and local-frame relations have the same meaning whichever numerical basis is used. Validation on acyclic, cyclic, planar, fused, bridged, and flexible systems shows that rank, effective dimension, residuals, structural parameters, and propagated uncertainties are reproduced without manual coordinate-model formulation. A camphor stress test makes the distinction between solving and validating the model explicit: the accepted no-Kraitchman BDPCS3-predicate model gives sub-milliangstrom bond corrections, whereas superficially competitive variants based on unsupported hydrogen directions or tight Kraitchman predicates are rejected because they distort the geometry. The testosterone case study then shows that accurate quantum chemical equilibrium geometries, accelerated vibrational corrections, and algorithmically generated topology-constrained refinement models can be chained for molecular systems containing about 50 atoms, where isotope-rich data sets required by conventional refinement strategies are generally unavailable.
+Two equivalent active spaces are available: symmetry-adapted generalized internal coordinates built from homogeneous primitive families, and symmetry-adapted Cartesian displacements after removal of translations and rotations. The chemical interface remains internal-coordinate based, so bond, angle, dihedral, out-of-plane, ring, and local-frame relations have the same meaning whichever numerical basis is used. Validation on acyclic, cyclic, planar, fused, bridged, and flexible systems shows that rank, effective dimension, residuals, structural parameters, and propagated uncertainties are reproduced without manual coordinate-model formulation. In the norbornane-derived series, norcamphor probes a bridged reduced-dimensionality model and camphor adds methyl substitution as a stricter validation test: the accepted no-Kraitchman BDPCS3-predicate model gives sub-milliangstrom bond corrections, whereas superficially competitive variants based on unsupported hydrogen directions or tight Kraitchman predicates are rejected because they distort the geometry. The testosterone case study then shows that accurate quantum chemical equilibrium geometries, accelerated vibrational corrections, and algorithmically generated topology-constrained refinement models can be chained for molecular systems containing about 50 atoms, where isotope-rich data sets required by conventional refinement strategies are generally unavailable.
 
 \end{abstract}
 
@@ -196,6 +196,13 @@ with chemically meaningful constraints. In the GIC route, topological
 primitives are reduced within homogeneous families, so stretches, bends,
 torsions, out-of-plane motions, and ring coordinates cannot replace one
 another during rank reduction.\cite{PulayFogarasi1992,Peng1996Redundant,Baker1996Delocalized,BakkenHelgaker2002,Marenich2025GIC}
+The graph algorithms that generate the local primitive families, remove
+within-family redundancies, and form their symmetry-adapted combinations will
+be described in a separate methodological paper; here only their operational
+role in constrained structure refinement is needed. In particular, the present
+work examines how the generated coordinate spaces are coupled to isotopic
+coverage, rank, constraints, predicates, parameter classes, and validation
+diagnostics.
 In the Cartesian route, translations and rotations are removed from the
 Cartesian displacement space. In both cases symmetry selects the totally
 symmetric active block and completes primitive constraints over equivalent
@@ -831,75 +838,31 @@ The results are therefore not independent case studies but a sequence of
 stress tests, each designed to validate one property of the framework.
 Glycolaldehyde establishes the acyclic baseline; cyclopentadiene tests ring
 closure; nitrobenzene tests planar-component selection; azulene tests fused
-aromatic topology; norcamphor tests bridged graphs and hydrogen-frame
-constraints. The anhydride series probes how published data sets with
+aromatic topology; the norbornane-derived series tests bridged graphs, first
+through norcamphor and then through the methyl-substituted camphor framework.
+The anhydride series probes how published data sets with
 different isotopic completeness are converted into equivalent input models.
-Glycine I and II test reduced-dimensionality constraints. Camphor is introduced
-as a focused model-validation stress test, because it separates a chemically
-admissible predicate model from alternatives that give attractive residuals
-but unacceptable structures. Testosterone is kept separate and last because it
-is a scale demonstration rather than an isotope-rich benchmark. In all cases
-the input is Cartesian and no molecule-specific coordinate code, manual
-reference tree, or manual active-space selection is used.
+Glycine I and II test reduced-dimensionality constraints. Within the bridged
+series, camphor provides the focused model-validation stress test, because the
+additional methyl substitution increases the number of local hydrogen
+directions and separates a chemically admissible predicate model from
+alternatives that give attractive residuals but unacceptable structures.
+Testosterone is kept separate and last because it is a scale demonstration
+rather than an isotope-rich benchmark. In all cases the input is Cartesian and
+no molecule-specific coordinate code, manual reference tree, or manual
+active-space selection is used.
 
 \begin{figure*}
 \centering
-\begin{minipage}{0.23\linewidth}
-\centering
-\includegraphics[width=\linewidth]{figures/glycolaldehyde_numbering.pdf}
-\end{minipage}
-\begin{minipage}{0.23\linewidth}
-\centering
-\includegraphics[width=\linewidth]{figures/cyclopentadiene_numbering.pdf}
-\end{minipage}
-\begin{minipage}{0.23\linewidth}
-\centering
-\includegraphics[width=\linewidth]{figures/nitrobenzene_numbering.pdf}
-\end{minipage}
-\begin{minipage}{0.23\linewidth}
-\centering
-\includegraphics[width=\linewidth]{figures/p-EBN_numbering.pdf}
-\end{minipage}
-
-\vspace{0.25em}
-
-\begin{minipage}{0.23\linewidth}
-\centering
-\includegraphics[width=\linewidth]{figures/azulene_numbering.pdf}
-\end{minipage}
-\begin{minipage}{0.23\linewidth}
-\centering
-\includegraphics[width=\linewidth]{figures/norcamphor_numbering.pdf}
-\end{minipage}
-\begin{minipage}{0.23\linewidth}
-\centering
-\includegraphics[width=\linewidth]{figures/glycine_I_numbering.pdf}
-\end{minipage}
-\begin{minipage}{0.23\linewidth}
-\centering
-\includegraphics[width=\linewidth]{figures/glycine_II_numbering.pdf}
-\end{minipage}
-
-\vspace{0.25em}
-
-\begin{minipage}{0.23\linewidth}
-\centering
-\includegraphics[width=\linewidth]{figures/maleic_anhydride_numbering.pdf}
-\end{minipage}
-\begin{minipage}{0.23\linewidth}
-\centering
-\includegraphics[width=\linewidth]{figures/phthalic_anhydride_numbering.pdf}
-\end{minipage}
-\begin{minipage}{0.23\linewidth}
-\centering
-\includegraphics[width=\linewidth]{figures/succinic_anhydride_numbering.pdf}
-\end{minipage}
-\caption{Structures and atom numbering for the validation systems used to test algorithmic
-model generation: glycolaldehyde, cyclopentadiene, nitrobenzene, p-EBN,
-azulene, norcamphor, glycine I, glycine II, and the maleic, phthalic, and
-succinic anhydride series. For these systems, the same Cartesian
-numbering is used by topology perception, coordinate generation, constraints,
-diagnostics, and final structural tables.}
+\includegraphics[width=0.96\linewidth]{figures/studied_structures_3d.pdf}
+\caption{Molecular structures used to test algorithmic model generation. The
+acyclic, planar, aromatic, glycine, and anhydride benchmarks are shown as
+connectivity diagrams; the bridged norbornane family and testosterone are shown
+as three-dimensional structures because their graph topology is not
+communicated adequately by a planar drawing. Norbornane is included as the
+structural parent of the bridged series, while norcamphor and camphor are the
+semiexperimental validation cases. Detailed atom numbering for the tabulated
+structural parameters is given in the Supporting Information.}
 \label{fig:studied-structures}
 \end{figure*}
 
@@ -1214,7 +1177,7 @@ retains the information needed to
 assess model formulation: rank, dimensionality, symmetry, constraint
 projection, planar-component choice, residual scale, and minimum checks.
 
-\subsection{Generated Reduced-Dimensionality Models}
+\subsection{Generated Reduced-Dimensionality and Validation Models}
 
 Incomplete isotopic coverage can leave some structural directions unsupported.
 The advisor therefore treats reduced dimensionality as part of the
@@ -1224,7 +1187,7 @@ by primitive-coordinate constraints, predicates, or parameter classes.
 
 \begin{table*}
 \caption{Autonomous structural-model decisions made by the advisor in the
-reduced-dimensionality benchmarks. ``Active variables'' are the
+reduced-dimensionality and validation benchmarks. ``Active variables'' are the
 independent least-squares coordinates after symmetry selection and projection
 of hard primitive-coordinate constraints.}
 \label{tab:advisor-decisions}
@@ -1247,34 +1210,51 @@ from isotope coverage and chemical equivalence rather than imported as a
 manual parameter subset. In glycine I, glycine II, and norcamphor the available
 substitutions do not support all hydrogen-related directions independently;
 the advisor therefore converts the unsupported directions into explicit
-primitive-coordinate relations derived from the reference structure. Norcamphor
-is the most stringent low-symmetry bridged example in this group: all 48 GICs
-belong to the totally symmetric space, so the reduction is controlled by
-coverage and local-frame diagnostics rather than by point-group symmetry. The
-updated \texttt{xyzin} input uses the experimental constants of Table 3 of the
+primitive-coordinate relations derived from the reference structure.
+
+The bridged cases are best viewed as a norbornane-derived progression.
+Norbornane defines the bicyclic topology, norcamphor adds the ketone and
+sparse heavy-atom substitution data, and camphor adds methyl substitution and
+a larger set of local hydrogen directions. Norcamphor is therefore the
+reduced-dimensionality member of the series: all 48 GICs belong to the
+totally symmetric space, so the reduction is controlled by coverage and
+local-frame diagnostics rather than by point-group symmetry. The updated
+\texttt{xyzin} input uses the experimental constants of Table 3 of the
 norcamphor rotational study, the tabulated vibrational corrections, and
 Kraitchman-derived soft predicates generated from the singly substituted
-heavy-atom isotopologues. The workflow uses 30 hydrogen-frame constraints and 58
-\mbox{Kraitchman predicates} to obtain an 18-dimensional fit with a rotational
-RMS residual of 0.094~MHz. This run illustrates the intended role of
-predicates: they stabilize directions not fully determined by isotope coverage
-without changing the generated GIC basis or converting probabilistic
-information into hard constraints.
+heavy-atom isotopologues. The workflow uses 30 hydrogen-frame constraints and
+58 \mbox{Kraitchman predicates} to obtain an 18-dimensional fit with a
+rotational RMS residual of 0.094~MHz.
 
-Camphor tests the complementary question: not whether unsupported directions
-can be stabilized, but whether a generated model can reject a tempting but
-chemically wrong stabilization. The accepted run uses 12 isotopologue records,
-36 rotational constants, a full-rank 75-variable GIC model, and 178 BDPCS3
-soft predicates; no hydrogen coordinate is frozen and no Kraitchman-derived
-predicate is retained in the least-squares objective. The rotational RMS
-residual is 0.0788~MHz, with a maximum absolute residual of 0.284~MHz. More
-importantly, the final structural correction to the BDPCS3 reference remains
-small on the chemically relevant scale: the largest bond-length shift is
-0.832~m\AA{}, the largest valence-angle shift is $0.040^\circ$, and the
-corresponding propagated standard errors are bounded by 3.000~m\AA{} and
-$0.257^\circ$.
+Camphor then tests the complementary question: not whether unsupported
+directions can be stabilized, but whether a generated model can reject a
+tempting but chemically wrong stabilization in the same bridged family. The
+accepted run uses 12 isotopologue records, 36 rotational constants, a
+full-rank 75-variable GIC model, and 178 BDPCS3 soft predicates; no hydrogen
+coordinate is frozen and no Kraitchman-derived predicate is retained in the
+least-squares objective. The rotational RMS residual is 0.0788~MHz, with a
+maximum absolute residual of 0.284~MHz. More importantly, the final structural
+correction to the BDPCS3 reference remains small on the chemically relevant
+scale: the largest bond-length shift is 0.832~m\AA{}, the largest
+valence-angle shift is $0.040^\circ$, and the corresponding propagated
+standard errors are bounded by 3.000~m\AA{} and $0.257^\circ$.
 
-\begin{figure*}[t]
+The validation suite makes this distinction quantitative. Replaying the same
+model in the symmetry-adapted Cartesian basis changes the aligned Cartesian
+structure by only $5.2\times 10^{-11}$~\AA{} RMS; robust-loss and multistart
+checks change it by less than $5\times10^{-4}$~\AA{} RMS, and predicate-width
+scans keep the maximum atomic displacement below $9.5\times10^{-4}$~\AA{}.
+By contrast, removing hydrogen-related predicates gives lower or comparable
+rotational residuals but shifts atoms by up to 0.935~\AA{}, and tight
+Kraitchman predicates produce bond and angle distortions up to 7.65~m\AA{}
+and $0.343^\circ$. Broad Kraitchman predicates are not damaging, but they do
+not add useful information to the validated BDPCS3-predicate model. The
+camphor member of the bridged series therefore shows the operational role of
+the advisor: it does not merely assemble a least-squares input, it proposes a
+chemically explicit model and then rejects variants that fail reproducibility,
+robustness, or structural-stability checks.
+
+\begin{figure*}[p]
 \centering
 \includegraphics[width=0.92\linewidth]{figures/camphor_validation_distributions.pdf}
 \caption{Camphor validation stress test. Panels A and B show the signed
@@ -1289,21 +1269,6 @@ Kraitchman-derived predicates can yield superficially acceptable rotational
 residuals while distorting the geometry.}
 \label{fig:camphor-validation}
 \end{figure*}
-
-The validation suite makes this distinction quantitative. Replaying the same
-model in the symmetry-adapted Cartesian basis changes the aligned Cartesian
-structure by only $5.2\times 10^{-11}$~\AA{} RMS; robust-loss and multistart
-checks change it by less than $5\times10^{-4}$~\AA{} RMS, and predicate-width
-scans keep the maximum atomic displacement below $9.5\times10^{-4}$~\AA{}.
-By contrast, removing hydrogen-related predicates gives lower or comparable
-rotational residuals but shifts atoms by up to 0.935~\AA{}, and tight
-Kraitchman predicates produce bond and angle distortions up to 7.65~m\AA{}
-and $0.343^\circ$. Broad Kraitchman predicates are not damaging, but they do
-not add useful information to the validated BDPCS3-predicate model. The
-camphor example therefore shows the operational role of the advisor: it does
-not merely assemble a least-squares input, it proposes a chemically explicit
-model and then rejects variants that fail reproducibility, robustness, or
-structural-stability checks.
 
 \subsection{Glycine as an End-to-End Model-Generation Test}
 
@@ -1538,14 +1503,18 @@ effective dimensions and rotational residuals.
 
 Electronic-structure information is used only where the experiment does not
 fully determine the structure. For Gly-I the QC reference already lies within
-the practical rotational-accuracy window, so the fit provides a
-statistically consistent semiexperimental correction and uncertainty estimate.
-For Gly-II and norcamphor, the advisor converts reference information and
-isotope coverage into explicit reduced-dimensionality constraints. The
-reference therefore supplies constraints for unsupported directions, while the
+the practical rotational-accuracy window, so the fit provides a statistically
+consistent semiexperimental correction and uncertainty estimate. For Gly-II
+and norcamphor, the advisor converts reference information and isotope
+coverage into explicit reduced-dimensionality constraints. The reference
+therefore supplies constraints for unsupported directions, while the
 spectroscopic data determine all supported directions.
 
-The camphor case adds the decisive validation step. A model with strict
+The norbornane-derived series adds the decisive validation step. Norcamphor
+shows that a bridged low-symmetry topology can be reduced to a stable
+semiexperimental model when isotope coverage is incomplete. Camphor keeps the
+same structural motif but adds methyl substitution and a denser set of
+hydrogen-sensitive local directions. In that harder case, a model with strict
 BDPCS3-derived C--H predicates and no Kraitchman predicates gives a
 sub-milliangstrom correction to the reference geometry and remains stable
 under coordinate-basis changes, robust losses, predicate-width scans, and
