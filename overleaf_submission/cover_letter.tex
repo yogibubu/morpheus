@@ -1,0 +1,61 @@
+\documentclass[11pt]{letter}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\emergencystretch=2em
+
+\signature{Vincenzo Barone}
+\address{Vincenzo Barone\\
+INSTM, National Interuniversity Consortium for Materials Science and Technology\\
+via G. Giusti 9, 50121 Firenze, Italy\\
+\href{mailto:vincebarone52@gmail.com}{vincebarone52@gmail.com}}
+
+\begin{document}
+
+\begin{letter}{Editor\\
+The Journal of Chemical Physics}
+
+\opening{Dear Editor,}
+
+Please find enclosed the manuscript ``Algorithmic Construction and Exploitation
+of Topology-Constrained Refinement Models for Semiexperimental Equilibrium
+Structures,'' submitted for consideration as an Article in \emph{The Journal of
+Chemical Physics}.
+
+The manuscript introduces MORPHEUS, a framework that turns the formulation of
+semiexperimental refinement models into a reproducible topology-, symmetry-,
+and rank-audited procedure. Rather than assuming that the internal-coordinate
+model has already been selected by expert intervention, MORPHEUS constructs the
+active coordinate space from the molecular graph, applies symmetry and
+homogeneous rank reduction, projects constraints and predicates consistently,
+and propagates uncertainties back to chemically interpretable structural
+parameters.
+
+The work is, in my view, well aligned with the scope of \emph{The Journal of
+Chemical Physics} because it addresses a general problem at the interface of
+rotational spectroscopy, molecular structure determination, and quantum
+chemistry: how to combine high-resolution experimental data, computed
+vibrational and electronic corrections, topology, symmetry, and external
+reference information in a controlled statistical model. The validation spans
+acyclic, cyclic, planar, fused, bridged, and flexible molecules. A
+large-molecule testosterone case study further shows that accurate quantum
+chemical equilibrium structures, accelerated vibrational corrections, and
+algorithmically generated topology-constrained refinement models can be chained
+for systems containing about 50 atoms, where conventional isotope-rich
+semiexperimental analyses are not currently practical.
+
+The manuscript also emphasizes reproducibility. The reported models are not
+defined by molecule-specific Z-matrix choices, but by explicit primitive
+relations, parameter classes, predicates, and audit trails. The submitted
+Supporting Information documents the benchmark inputs, diagnostics, and the
+large-molecule class/predicate variants used in the paper.
+
+This manuscript is original, has not been published previously, and is not
+under consideration elsewhere. I confirm that there are no conflicts of
+interest to declare.
+
+\closing{Sincerely,}
+
+\end{letter}
+
+\end{document}
