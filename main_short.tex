@@ -859,12 +859,13 @@ active-space selection is used.
 \includegraphics[width=0.96\linewidth]{figures/studied_structures_3d.pdf}
 \caption{Molecular structures used to test algorithmic model generation. The
 acyclic, planar, aromatic, glycine, and anhydride benchmarks are shown as
-connectivity diagrams; the bridged norbornane family and testosterone are shown
-as three-dimensional structures because their graph topology is not
-communicated adequately by a planar drawing. Norbornane is included as the
-structural parent of the bridged series, while norcamphor and camphor are the
-semiexperimental validation cases. Detailed atom numbering for the tabulated
-structural parameters is given in the Supporting Information.}
+connectivity diagrams; the bridged norbornane family is shown as
+three-dimensional structures because its graph topology is not communicated
+adequately by a planar drawing. Norbornane is included as the structural parent
+of the bridged series, while norcamphor and camphor are the semiexperimental
+validation cases. Testosterone is shown separately in the large-molecule scale
+demonstration. Detailed atom numbering for the tabulated structural parameters
+is given in the Supporting Information.}
 \label{fig:studied-structures}
 \end{figure*}
 
@@ -900,7 +901,11 @@ but the central result is that these residuals are obtained from generated,
 auditable models. The glycine examples also separate two roles of theory:
 Gly-I starts from a reference that already satisfies the practical
 rotational-accuracy target, whereas Gly-II uses QC-derived relations to define
-missing reduced-dimensionality information.
+missing reduced-dimensionality information. The numerical counterpart of this
+graphical audit is given explicitly in the Supporting Information: Table~S3
+lists the generated working-coordinate models and active dimensions, while
+Table~S8 shows that imported legacy MSR/MSROT numerical models are reproduced
+without changing their active-coordinate content.
 
 Figure~\ref{fig:benchmark-overview} also makes explicit what is generated.
 For azulene, topology and symmetry generate 48 final GICs, identify 17
@@ -1255,6 +1260,9 @@ camphor member of the bridged series therefore shows the operational role of
 the advisor: it does not merely assemble a least-squares input, it proposes a
 chemically explicit model and then rejects variants that fail reproducibility,
 robustness, or structural-stability checks.
+Table~S6 reports the corresponding final-validation runs explicitly, including
+coordinate-basis replay, robust loss, predicate-width scans, multistarts, and
+leave-predicate-group-out controls.
 
 \begin{figure*}[p]
 \centering

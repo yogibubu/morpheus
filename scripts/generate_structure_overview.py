@@ -60,7 +60,6 @@ PANELS = [
         mode="3d",
         note="methylated test",
     ),
-    Panel("Testosterone", "CC12CCC3C(C1CCC2O)CCC4=CC(=O)CCC34C", mode="3d"),
 ]
 
 
@@ -161,9 +160,9 @@ def draw_3d(ax, panel: Panel) -> None:
 
 def main() -> None:
     plt.rcParams.update({"font.family": "DejaVu Sans", "pdf.fonttype": 42, "ps.fonttype": 42})
-    fig = plt.figure(figsize=(7.25, 7.35))
-    grid = fig.add_gridspec(4, 4, hspace=0.35, wspace=0.16)
-    axes = [fig.add_subplot(grid[i // 4, i % 4]) for i in range(16)]
+    fig = plt.figure(figsize=(7.25, 5.95))
+    grid = fig.add_gridspec(3, 4, hspace=0.35, wspace=0.16)
+    axes = [fig.add_subplot(grid[i // 4, i % 4]) for i in range(12)]
     for ax in axes:
         ax.axis("off")
 
@@ -177,12 +176,6 @@ def main() -> None:
         if panel.note:
             ax.text(0.5, -0.035, panel.note, transform=ax.transAxes, ha="center", va="top", fontsize=6.8, color="#4A5561")
 
-    # Leave the last three cells for a compact legend and family cue.
-    legend_ax = axes[-3]
-    legend_ax.axis("off")
-    legend_ax.text(0.02, 0.78, "3D bridged series", transform=legend_ax.transAxes, fontsize=8.2, weight="bold", color="#263238")
-    legend_ax.text(0.02, 0.58, "norbornane to norcamphor to camphor", transform=legend_ax.transAxes, fontsize=7.2, color="#263238")
-    legend_ax.text(0.02, 0.35, "Camphor adds methyl substitution to the norbornane ketone framework.", transform=legend_ax.transAxes, fontsize=6.8, color="#4A5561", wrap=True)
     FIGURES.mkdir(exist_ok=True)
     fig.savefig(FIGURES / "studied_structures_3d.pdf", bbox_inches="tight")
     fig.savefig(FIGURES / "studied_structures_3d.png", dpi=260, bbox_inches="tight")

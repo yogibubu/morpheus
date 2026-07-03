@@ -116,12 +116,12 @@ def make_figure() -> None:
     angle_shifts, angle_errors = geometry_by_kind("angle")
     stability = {row["variant"]: row for row in read_csv("camphor_stability_summary.csv")}
     selected = [
-        ("ref_no_kra_full_validation", "reference", TEAL, "o", 1.10, 0.86),
-        ("all_sigmas_x3", "all sigma x3", BLUE, "o", 1.12, 1.08),
-        ("bdpcs3_plus_kraitchman_partial_broad", "broad Kra", GREY, "s", 1.12, 1.22),
-        ("bdpcs3_plus_kraitchman_partial_tight", "tight Kra", RED, "D", 1.08, 0.95),
-        ("no_h_predicates", "no H predicates", RED, "^", 0.70, 0.74),
-        ("kraitchman_partial_autostabilized", "Kra partial", RED, "v", 0.70, 1.17),
+        ("ref_no_kra_full_validation", "reference", TEAL, "o", (18, -16), "left"),
+        ("all_sigmas_x3", "all sigma x3", BLUE, "o", (18, 2), "left"),
+        ("bdpcs3_plus_kraitchman_partial_broad", "broad Kra", GREY, "s", (18, 18), "left"),
+        ("bdpcs3_plus_kraitchman_partial_tight", "tight Kra", RED, "D", (8, -2), "left"),
+        ("no_h_predicates", "no H predicates", RED, "^", (-36, -8), "left"),
+        ("kraitchman_partial_autostabilized", "Kra partial", RED, "v", (-36, 8), "left"),
     ]
 
     plt.rcParams.update(
@@ -157,12 +157,23 @@ def make_figure() -> None:
         bins=12,
     )
 
-    for key, label, color, marker, dx, dy in selected:
+    for key, label, color, marker, offset, ha in selected:
         row = stability[key]
         x = float(row["bond_delta_initial_max_mA"])
         y = float(row["angle_delta_initial_max_deg"])
         ax3.scatter(x, y, s=64, color=color, marker=marker, edgecolor="white", linewidth=0.8, zorder=3)
-        ax3.text(x * dx, y * dy, label, fontsize=7.5, color=INK)
+        ax3.annotate(
+            label,
+            xy=(x, y),
+            xytext=offset,
+            textcoords="offset points",
+            ha=ha,
+            va="center",
+            fontsize=7.5,
+            color=INK,
+            arrowprops={"arrowstyle": "-", "color": "#8A9197", "lw": 0.55, "shrinkA": 2, "shrinkB": 5},
+            zorder=4,
+        )
 
     ax3.set_xscale("log")
     ax3.set_yscale("log")
@@ -171,11 +182,11 @@ def make_figure() -> None:
     ax3.set_title("C  Validation distinguishes stable models from misleading residuals", loc="left", fontsize=9.5, fontweight="bold", color=INK)
     ax3.grid(which="both", color="#D8DCE0", linewidth=0.55, alpha=0.72)
     ax3.set_xlim(0.45, 220)
-    ax3.set_ylim(0.025, 8.5)
+    ax3.set_ylim(0.015, 8.5)
     ax3.tick_params(labelsize=7.5)
     ax3.text(
         0.985,
-        0.04,
+        0.035,
         "Accepted model: no Kraitchman predicates; strict C-H soft predicates.",
         transform=ax3.transAxes,
         ha="right",
