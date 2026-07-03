@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# LaTeX build products
+*.aux
+*.log
+*.fls
+*.fdb_latexmk
+*.blg
+*.out
+*.toc
+*.lof
+*.lot
+*.synctex.gz
+*.run.xml
+*-blx.bib
+
+# Temporary render/build folders
+tmp/
+tmp_render/
