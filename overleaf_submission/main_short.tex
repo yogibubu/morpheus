@@ -199,7 +199,9 @@ another during rank reduction.\cite{PulayFogarasi1992,Peng1996Redundant,Baker199
 The graph algorithms that generate the local primitive families, remove
 within-family redundancies, and form their symmetry-adapted combinations will
 be described in a separate methodological paper; here only their operational
-role in constrained structure refinement is needed. In particular, the present
+role in constrained structure refinement is needed. This boundary is deliberate:
+the present paper validates the refinement-model layer, independent of which
+topology-perception implementation feeds it. The present
 work examines how the generated coordinate spaces are coupled to isotopic
 coverage, rank, constraints, predicates, parameter classes, and validation
 diagnostics.
@@ -1562,11 +1564,13 @@ residuals, and archived \texttt{MORPHEUS} output files.
 
 \section*{Code Availability}
 
-\texttt{MORPHEUS} is being integrated into the broader \texttt{MATRIX}
-framework. The version used for the calculations reported here will be made
-available shortly as part of the \texttt{MATRIX} distribution, together with
-the benchmark inputs and audit manifests needed to reproduce the tables and
-figures.
+The refinement engine and statistical diagnostics underlying the benchmarks
+reported here, together with the corresponding input/output and audit files,
+are available in the Supporting Information. \texttt{MORPHEUS} is being
+integrated into the broader \texttt{MATRIX} framework. The coordinate-generation
+module remains under active development for intermolecular systems and other
+special-coordinate classes and is planned to be made available with the
+companion methodological paper.
 
 
 \bibliographystyle{aipnum4-2}
