@@ -15,6 +15,7 @@ from rdkit.Chem import AllChem, Draw
 
 ROOT = Path(__file__).resolve().parents[1]
 FIGURES = ROOT / "figures"
+MATRIX_REPO = Path("/Users/vincenzobarone/Documents/git/software/matrix")
 
 ATOM_COLORS = {
     "H": "#D9D9D9",
@@ -49,7 +50,7 @@ PANELS = [
     Panel(
         "Norcamphor",
         "O=C1C2CCC(C2)C1",
-        xyz=Path("/Users/vincenzobarone/MATRIX/working/semiexp/norcamphor_table3_kraitchman_cartesian/semiexp_geometry.xyz"),
+        xyz=MATRIX_REPO / "working/semiexp/norcamphor_table3_kraitchman_cartesian/semiexp_geometry.xyz",
         mode="3d",
         note="bridged ketone",
     ),

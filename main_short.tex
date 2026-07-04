@@ -715,17 +715,28 @@ remain external diagnostics rather than hidden constraints.
 
 \section{Implementation and Reproducibility}
 
-The implementation is organized around two reusable services. The
-coordinate-definition service builds the molecular coordinate model from
-Cartesian atoms and nuclear charges, assigning point-group symmetry and
-irreducible representations when requested. A separate B-matrix service
-evaluates the same frozen coordinate definition for any compatible Cartesian
-geometry. During refinement, the engine reuses the stored coordinate model
-and updates only the derivative information needed for the current step.
+The implementation used for the present calculations is the semiexperimental
+layer of the \texttt{MATRIX} development code base
+(\texttt{matrix-morpheus}). It is organized around reusable coordinate and
+derivative services. The coordinate-definition service builds the molecular
+model from Cartesian atoms and nuclear charges, assigns point-group symmetry
+and irreducible representations when requested, and stores the frozen
+coordinate definition. A separate B-matrix service evaluates that same
+definition for any compatible Cartesian geometry. During refinement, the
+engine reuses the stored coordinate model and updates only the derivative
+information needed for the current step.
 
-The standard input contains the Cartesian parent geometry, optional primitive
-freeze or constraint records, and isotopologue data with rotational constants,
-corrections, uncertainties, masses, and conventions.
+The standard input is either a semiexperimental job file
+(\texttt{oracle.semiexp.job.v1}, with a legacy
+\texttt{merlino.semiexp.job.v1} reader) or an enriched \texttt{xyzin}
+container carrying the same information. It contains the Cartesian parent
+geometry, optional primitive freeze or constraint records, parameter classes
+and primitive-coordinate predicates when required, and isotopologue data with
+rotational constants, vibrational and electronic corrections, uncertainties,
+masses, and correction conventions. Upstream Gaussian rovibrational data can
+also be promoted into the same container as normalized \texttt{DELTABVIB} and
+semidiagonal-cubic sections before they are used by \texttt{MORPHEUS}; this is
+an input provenance layer, not a change in the refinement model.
 
 Each run records the final Cartesian structure, propagated primitive
 parameters, rotational residuals, covariance and SVD diagnostics, projected
@@ -736,13 +747,14 @@ source for the benchmark tables.
 
 The production report also records the final primitive parameters together
 with their starting values, final-minus-starting shifts, and propagated
-standard errors. A final-validation stage can replay the same accepted model
-with the alternate active coordinate basis, robust loss functions, predicate
-width scans, leave-predicate-group-out tests, random multistarts,
-leave-one-isotopologue checks, and predicate audits. These checks are not used
-to lower the residual. They test whether a proposed model is reproducible,
-well conditioned, and chemically stable under reasonable perturbations of the
-assumptions that made the inverse problem soluble.
+standard errors. A final-validation stage writes an
+\texttt{oracle.semiexp.final\_validation.v1} audit and can replay the same
+accepted model with the alternate active coordinate basis, robust loss
+functions, predicate-width scans, leave-predicate-group-out tests, random
+multistarts, leave-one-isotopologue checks, and predicate audits. These checks
+are not used to lower the residual. They test whether a proposed model is
+reproducible, well conditioned, and chemically stable under reasonable
+perturbations of the assumptions that made the inverse problem soluble.
 
 
 \section{Relationship to Existing Approaches}
@@ -816,14 +828,17 @@ In most cases, vibrational corrections and constraint targets were taken from th
 double-hybrid member of the family (DPCS3) and its bond-corrected enhancement (BDPCS3),
 which have been validated in previous work for accurate structures and fast rovibrational corrections.\cite{wires_2025,Mendolicchio2025FastDvib,acr_2026}
 The vibrational contributions to the rotational constants
-($\Delta B_\mathrm{vib}$) were evaluated with the recently introduced
+($\Delta B_\mathrm{vib}$) can be evaluated with the recently introduced
 finite-difference-of-gradients approach along normal modes, which enables
 efficient and accurate calculations also for medium-sized and large molecular
-systems.\cite{Mendolicchio2025FastDvib} For the literature benchmarks, the
-actual $\Delta B_\mathrm{vib}$ values are taken from the cited experimental or
-semiexperimental data sets; the finite-difference-of-gradients protocol is used
-here as new large-molecule input for testosterone, with the computational
-recipe and convergence details documented in Ref.~\citenum{Mendolicchio2025FastDvib}.
+systems.\cite{Mendolicchio2025FastDvib} In the \texttt{MATRIX} implementation,
+new Gaussian rovibrational calculations are normalized through the
+semidiagonal \texttt{freq=vibrot}/\texttt{freq=(numer,readharm,vibrot)}
+workflow and stored as \texttt{xyzin} correction sections. For the benchmark
+calculations reported here, the actual $\Delta B_\mathrm{vib}$ values are the
+tabulated values from the cited experimental or semiexperimental data sets;
+for testosterone, the published B3 vibrational corrections of
+Uribe et al.\ are used with the reported ground-state constants.
 
 The only exception is conformer I of glycine, where the best available reference structure was used: PCS4, based on explicitly correlated CCSD(T)-F12 calculations close to the complete-basis-set limit with an additive core--valence correction. Outside this role as reference information, the electronic-structure
 data do not define the fitted coordinates; they enter only through explicit
@@ -902,10 +917,10 @@ auditable models. The glycine examples also separate two roles of theory:
 Gly-I starts from a reference that already satisfies the practical
 rotational-accuracy target, whereas Gly-II uses QC-derived relations to define
 missing reduced-dimensionality information. The numerical counterpart of this
-graphical audit is given explicitly in the Supporting Information: Table~S3
-lists the generated working-coordinate models and active dimensions, while
-Table~S8 shows that imported legacy MSR/MSROT numerical models are reproduced
-without changing their active-coordinate content.
+graphical audit is given explicitly in the Supporting Information: the
+working-coordinate table lists the generated models and active dimensions,
+while the legacy-compatibility table shows that imported MSR/MSROT numerical
+models are reproduced without changing their active-coordinate content.
 
 Figure~\ref{fig:benchmark-overview} also makes explicit what is generated.
 For azulene, topology and symmetry generate 48 final GICs, identify 17
@@ -936,7 +951,7 @@ reports the reproducible decision burden. The final column counts
 molecule-specific coordinate or constraint edits made by the user in the
 reported runs.}
 \label{tab:manual-vs-morpheus}
-\footnotesize
+\scriptsize
 \setlength{\tabcolsep}{1.5pt}
 \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lllll@{}}
 \toprule
@@ -992,32 +1007,12 @@ the model layer applies any necessary constraints, predicates, or parameter
 classes as explicit statistical relations.
 
 For maleic anhydride no auxiliary relation is introduced and 21
-non-redundant symmetry coordinates are generated, of which the eight $A_1$ coordinates are
-the active variables for the planar SE fit (Table~\ref{tab:maleic-symmetry-gics}).
+non-redundant symmetry coordinates are generated, of which the eight $A_1$
+coordinates are the active variables for the planar SE fit. The complete
+symmetry-block inventory is reported in the Supporting Information.
 The GIC and symmetry-Cartesian routes both give rank 8 and a rotational RMS
 residual of 0.036~MHz; the recovered bond lengths agree with the published
 $r_e^\mathrm{SE}$ values within $1.2\times10^{-4}$~\AA.
-
-\begin{table*}[t]
-\caption{Algorithmically generated symmetry-coordinate model for maleic
-anhydride from literature data. Only the totally symmetric $A_1$ block is
-active in the C$_{2v}$ semiexperimental refinement.}
-\label{tab:maleic-symmetry-gics}
-\scriptsize
-\setlength{\tabcolsep}{4pt}
-\begin{tabular}{@{}lcl@{}}
-\toprule
-Symmetry block & Coordinates & Role in the SE model \\
-\midrule
-$A_1$ & 8 & Active stretches/bends; rank 8 \\
-$A_2$ & 3 & Torsion/out-of-plane diagnostics \\
-$B_1$ & 3 & Torsion/out-of-plane diagnostics \\
-$B_2$ & 7 & Stretch/bend diagnostics \\
-\midrule
-Total & 21 & Non-redundant GIC space \\
-\bottomrule
-\end{tabular}
-\end{table*}
 
 Table~\ref{tab:generated-relation-example} illustrates the type of chemically
 meaningful relations generated by the advisor. The program
@@ -1260,11 +1255,37 @@ camphor member of the bridged series therefore shows the operational role of
 the advisor: it does not merely assemble a least-squares input, it proposes a
 chemically explicit model and then rejects variants that fail reproducibility,
 robustness, or structural-stability checks.
-Table~S6 reports the corresponding final-validation runs explicitly, including
+
+\begin{widetext}
+\begin{center}
+\refstepcounter{table}
+\label{tab:camphor-final-validation}
+\parbox{0.96\textwidth}{\small\raggedright Table~\thetable: Camphor
+final-validation controls. RMSD and maximum atomic shifts are computed after
+alignment to the accepted no-Kraitchman BDPCS3-predicate reference geometry.\par}
+\smallskip
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrl}
+\toprule
+Check & Runs & Max RMS/MHz & Max RMSD/\AA{} & Max atom/\AA{} & Interpretation \\
+\midrule
+Coordinate-model replay & 1 & 0.0788 & $5.24\times10^{-11}$ & $1.12\times10^{-10}$ & basis independent \\
+Huber robust loss & 1 & 0.1388 & $1.93\times10^{-4}$ & $3.67\times10^{-4}$ & stable \\
+Predicate sigma scans & 12 & 0.0868 & $3.56\times10^{-4}$ & $9.48\times10^{-4}$ & stable \\
+Random multistarts & 5 & 0.0788 & $4.74\times10^{-4}$ & $6.92\times10^{-4}$ & stable \\
+Leave non-H predicate groups out & 3 & 0.0778 & 0.0040 & 0.0137 & moderate drift \\
+Leave H predicate groups out & 3 & 0.0777 & 0.3039 & 0.9347 & failure mode \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{widetext}
+
+Table~\ref{tab:camphor-final-validation} summarizes the corresponding
 coordinate-basis replay, robust loss, predicate-width scans, multistarts, and
 leave-predicate-group-out controls.
 
-\begin{figure*}[p]
+\begin{figure*}[t]
 \centering
 \includegraphics[width=0.92\linewidth]{figures/camphor_validation_distributions.pdf}
 \caption{Camphor validation stress test. Panels A and B show the signed
@@ -1579,12 +1600,12 @@ residuals, and archived \texttt{MORPHEUS} output files.
 
 The benchmark input/output files, numerical audit trails, and statistical
 diagnostics are documented in the Supporting Information. The code implementing
-the least-squares refinement engine used for the benchmarks reported here is
-available from the authors upon request. \texttt{MORPHEUS} is being integrated
-into the broader \texttt{MATRIX} framework. The coordinate-generation module
-remains under active development for intermolecular systems and other
-special-coordinate classes and is planned to be made available with the
-companion methodological paper.
+the least-squares refinement engine, job/\texttt{xyzin} readers, and
+final-validation audit used for the benchmarks reported here is part of the
+\texttt{MATRIX} development code base and is available from the authors upon
+request. The coordinate-generation module remains under active development for
+intermolecular systems and other special-coordinate classes and is planned to
+be made available with the companion methodological paper.
 
 
 \bibliographystyle{aipnum4-2}

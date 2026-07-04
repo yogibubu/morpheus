@@ -7,7 +7,7 @@ the MORPHEUS manuscript and Supporting Information.
 The accepted reference run is the no-Kraitchman BDPCS3-predicate model from
 the MATRIX semiexperimental camphor stability suite:
 
-`/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/ref_no_kra_full_validation`
+`/Users/vincenzobarone/Documents/git/software/matrix/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/ref_no_kra_full_validation`
 
 The retained model uses 178 BDPCS3 predicates and no fixed hydrogen
 coordinates. C-H distances are treated with strict soft predicates, while
