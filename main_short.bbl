@@ -6,7 +6,7 @@
 %Control: page (0) single
 %Control: year (1) truncated
 %Control: production of eprint (0) enabled
-\begin{thebibliography}{33}%
+\begin{thebibliography}{35}%
 \makeatletter
 \providecommand \@ifxundefined [1]{%
  \@ifx{#1\undefined}
@@ -168,6 +168,27 @@
    {journal} {Mol. Struct. Diffr. Methods}\ }\textbf {\bibinfo {volume} {3}},\
   \bibinfo {pages} {72} (\bibinfo {year} {1975})},\ \bibinfo {note} {chemical
   Society Specialist Periodical Reports}\BibitemShut {NoStop}%
+\bibitem [{\citenamefont {Lazzari}\ \emph {et~al.}(2020)\citenamefont
+  {Lazzari}, \citenamefont {Salvadori}, \citenamefont {Mancini},\ and\
+  \citenamefont {Barone}}]{Lazzari2020Proxima}%
+  \BibitemOpen
+  \bibfield  {author} {\bibinfo {author} {\bibfnamefont {F.}~\bibnamefont
+  {Lazzari}}, \bibinfo {author} {\bibfnamefont {A.}~\bibnamefont {Salvadori}},
+  \bibinfo {author} {\bibfnamefont {G.}~\bibnamefont {Mancini}},\ and\ \bibinfo
+  {author} {\bibfnamefont {V.}~\bibnamefont {Barone}},\ }\href
+  {https://doi.org/10.1021/acs.jcim.0c00076} {\bibfield  {journal} {\bibinfo
+  {journal} {J. Chem. Inf. Model.}\ }\textbf {\bibinfo {volume} {60}},\
+  \bibinfo {pages} {2668} (\bibinfo {year} {2020})}\BibitemShut {NoStop}%
+\bibitem [{\citenamefont {Lazzari}, \citenamefont {Mendolicchio},\ and\
+  \citenamefont {Barone}(2024)}]{Lazzari2024SynthonPCS}%
+  \BibitemOpen
+  \bibfield  {author} {\bibinfo {author} {\bibfnamefont {F.}~\bibnamefont
+  {Lazzari}}, \bibinfo {author} {\bibfnamefont {M.}~\bibnamefont
+  {Mendolicchio}},\ and\ \bibinfo {author} {\bibfnamefont {V.}~\bibnamefont
+  {Barone}},\ }\href {https://doi.org/10.1021/acs.jpca.3c08382} {\bibfield
+  {journal} {\bibinfo  {journal} {J. Phys. Chem. A}\ }\textbf {\bibinfo
+  {volume} {128}},\ \bibinfo {pages} {1385} (\bibinfo {year}
+  {2024})}\BibitemShut {NoStop}%
 \bibitem [{\citenamefont {Mendolicchio}\ \emph {et~al.}(2025)\citenamefont
   {Mendolicchio}, \citenamefont {Uribe}, \citenamefont {Lazzari}, \citenamefont
   {Crisci}, \citenamefont {Scalmani}, \citenamefont {Frisch},\ and\
