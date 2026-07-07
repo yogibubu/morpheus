@@ -25,11 +25,11 @@ Chemical Physics}.
 The manuscript introduces MORPHEUS, a framework that turns the formulation of
 semiexperimental refinement models into a reproducible topology-, symmetry-,
 and rank-audited procedure. Rather than assuming that the internal-coordinate
-model has already been selected by expert intervention, MORPHEUS constructs the
-active coordinate space from the molecular graph, applies symmetry and
-homogeneous rank reduction, projects constraints and predicates consistently,
-and propagates uncertainties back to chemically interpretable structural
-parameters.
+model has already been selected by expert intervention, MORPHEUS uses
+SMITH-generated SONIC coordinate contracts and Wilson B matrices, applies
+symmetry and homogeneous rank reduction, projects constraints and predicates
+consistently, and propagates uncertainties back to chemically interpretable
+structural parameters.
 
 The work is, in my view, well aligned with the scope of \emph{The Journal of
 Chemical Physics} because it addresses a general problem at the interface of
@@ -49,6 +49,11 @@ defined by molecule-specific Z-matrix choices, but by explicit primitive
 relations, parameter classes, predicates, and audit trails. The submitted
 Supporting Information documents the benchmark inputs, diagnostics, and the
 large-molecule class/predicate variants used in the paper.
+
+The coordinate-generation layer used here is the subject of a companion
+SMITH/SONIC methodological manuscript that is currently in preparation for
+publication. If useful for evaluation, that manuscript can be supplied as
+confidential supplementary material for the referees.
 
 This manuscript is original, has not been published previously, and is not
 under consideration elsewhere. I confirm that there are no conflicts of

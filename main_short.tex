@@ -1,8 +1,9 @@
 \documentclass[aip,jcp,reprint,longbibliography,floatfix]{revtex4-2}
 
 \usepackage{graphicx}
-\usepackage{amsmath,amssymb,mathtools}
+\usepackage{amsmath,amssymb,mathtools,bm}
 \usepackage{booktabs}
+\usepackage{placeins}
 \usepackage{siunitx}
 \usepackage{verbatim}
 \usepackage{array}
@@ -68,18 +69,21 @@ least-squares observable or a molecule-specific improvement in residuals, but
 an algorithmic route from molecular topology to a reproducible statistical
 refinement model.
 
-In this implementation, the Nonredundant Equivariant Orthogonalizer (NEO) is
-the coordinate engine: it builds non-redundant, symmetry-adapted GIC and
-Cartesian bases from the molecular graph. \texttt{MORPHEUS} is the refinement
-layer built on those bases: it selects experimentally supported directions,
-applies constraints, classes, and predicates, solves the least-squares problem,
-and tests the stability of the accepted model.
-The molecular-state information consumed by NEO is supplied by ORACLE, a new
-implementation of the continuous molecular perception and synthon descriptors
-introduced in earlier work.\cite{Lazzari2020Proxima,Lazzari2024SynthonPCS}
-Thus ORACLE fixes atom perception, topology, symmetry operations, and chemical
-descriptors once; NEO freezes the resulting coordinate contract; and MORPHEUS
-uses that contract without regenerating the model during refinement.
+In this implementation, the non-redundant internal-coordinate family is
+\texttt{SONIC} (Symmetry-Oriented Non-redundant Internal Coordinates), and
+\texttt{SMITH} is the standalone builder that constructs the corresponding
+coordinate contracts. The contract contains the non-redundant,
+symmetry-adapted GIC basis, the symmetry-adapted Cartesian reference spaces,
+symmetry labels, provenance, and the analytic Wilson $\mathbf{B}$ rows needed
+by downstream modules. \texttt{MORPHEUS} is the refinement layer built on those
+frozen definitions: it selects experimentally supported directions, applies
+constraints, classes, and predicates, solves the least-squares problem, and
+tests the stability of the accepted model. The molecular-state perception used
+by \texttt{SMITH} follows the continuous molecular perception and synthon
+descriptors introduced in earlier work.\cite{Lazzari2020Proxima,Lazzari2024SynthonPCS}
+Thus topology, symmetry operations, chemical descriptors, coordinate
+definitions, and derivative conventions are fixed once; \texttt{MORPHEUS} uses
+that contract without regenerating the model during refinement.
 
 Recent workflows have extended semiexperimental refinement by combining
 computed starting geometries, quantum chemical (QC) vibrational corrections, and
@@ -210,14 +214,13 @@ primitives are reduced within homogeneous families, so stretches, bends,
 torsions, out-of-plane motions, and ring coordinates cannot replace one
 another during rank reduction.\cite{PulayFogarasi1992,Peng1996Redundant,Baker1996Delocalized,BakkenHelgaker2002,Marenich2025GIC}
 The graph algorithms that generate the local primitive families, remove
-within-family redundancies, and form their symmetry-adapted combinations will
-be described in a separate methodological paper; here only their operational
-role in constrained structure refinement is needed. This boundary is deliberate:
-the present paper validates the refinement-model layer, independent of which
-topology-perception implementation feeds it. In the calculations reported here,
-that molecular-state layer is ORACLE, which follows the continuous-perception
-and synthon strategy cited above. The present
-work examines how the generated coordinate spaces are coupled to isotopic
+within-family redundancies, form their symmetry-adapted combinations, and
+evaluate the associated Wilson $\mathbf{B}$ matrices are implemented in
+\texttt{SMITH} as \texttt{SONIC} coordinate contracts. They are documented in a
+companion methodological manuscript, currently in preparation for publication;
+the present paper uses the resulting coordinate and derivative objects only as
+the fixed input to the refinement-model layer. This boundary is deliberate: the
+present work examines how generated coordinate spaces are coupled to isotopic
 coverage, rank, constraints, predicates, parameter classes, and validation
 diagnostics.
 In the Cartesian route, translations and rotations are removed from the
@@ -736,14 +739,16 @@ remain external diagnostics rather than hidden constraints.
 \section{Implementation and Reproducibility}
 
 The implementation used for the present calculations is organized around
-reusable molecular-state, coordinate, and derivative services. ORACLE builds
-the molecular state from Cartesian atoms and nuclear charges, assigns topology,
-point-group operations, perception descriptors, and synthons; NEO constructs
-and stores the frozen coordinate definition, including the symmetry-operation
-residual margins and SALC gauge policy introduced in the companion NEO work.
-A separate B-matrix service evaluates that same definition for any compatible
-Cartesian geometry. During refinement, the engine reuses the stored coordinate
-model and updates only the derivative information needed for the current step.
+reusable molecular-state, coordinate, and derivative services. \texttt{SMITH}
+builds or consumes the frozen molecular state from Cartesian atoms and nuclear
+charges, topology, point-group operations, perception descriptors, and
+synthons, and stores the resulting \texttt{SONIC} coordinate contract,
+including family labels, symmetry-operation residual margins, SALC gauge
+policy, and provenance. The same \texttt{SMITH}/\texttt{SONIC} contract is
+then used to evaluate the Wilson $\mathbf{B}$ matrix for any compatible
+Cartesian geometry. During refinement, \texttt{MORPHEUS} reuses the stored
+coordinate model and updates only the derivative information needed for the
+current step.
 
 The standard input is either a semiexperimental job file
 (\texttt{oracle.semiexp.job.v1}, with a legacy
@@ -803,7 +808,7 @@ to primitive-coordinate relations. Kisiel's \texttt{STRFIT}/PROSPE
 route\cite{KisielPROSPE} remains an important reference point for
 rotational-structure fitting, but the structural model is again supplied by
 the user.\cite{Kanzow2025PCCP}
-The intramolecular NEO coordinate generator therefore follows the
+The intramolecular \texttt{SMITH}/\texttt{SONIC} coordinate generator therefore follows the
 natural-internal-coordinate
 tradition, but adds the machinery needed for the present refinement problem:
 topology-specific primitive families, including ring, out-of-plane, and other
@@ -1649,13 +1654,13 @@ The benchmark input/output files, numerical audit trails, and statistical
 diagnostics are documented in the Supporting Information. The code implementing
 the least-squares refinement engine, job/\texttt{xyzin} readers, coordinate
 contracts, and final-validation audit used for the benchmarks reported here is
-available from the author upon request. The intramolecular coordinate-generation
-path used in the present work has been exercised over the benchmark set reported
-here. The public NEO/ORACLE release is planned with the companion
-methodological paper, where intermolecular coordinates and additional
-special-coordinate classes will be treated explicitly. This does not affect the
-present applications, because the final-validation workflow replays accepted
-models in
+available from the author upon request. The intramolecular coordinate
+definitions and Wilson $\mathbf{B}$ matrices used in the present work were
+generated as \texttt{SONIC} contracts by \texttt{SMITH}; the companion
+\texttt{SMITH}/\texttt{SONIC} methodological manuscript is in preparation for
+publication and can be supplied as confidential supplementary material for
+referees if required by the journal. This does not affect the present
+applications, because the final-validation workflow replays accepted models in
 both the generated GIC basis and the independent symmetry-adapted Cartesian
 basis whenever both representations are applicable.
 
