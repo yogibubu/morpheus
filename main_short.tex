@@ -750,6 +750,28 @@ Cartesian geometry. During refinement, \texttt{MORPHEUS} reuses the stored
 coordinate model and updates only the derivative information needed for the
 current step.
 
+For non-covalent complexes, the refinement also requires a common Cartesian
+gauge across isotopologues, electronic-structure backends, and fit iterations.
+The default MATRIX frame places the weighted center at the origin and uses
+ordered principal inertia axes.  Physical masses remain mandatory when moments
+of inertia or Kraitchman substitution coordinates are evaluated; the
+coordinate-model frame instead uses nuclear charges by default, so isotope
+replacement cannot rotate its axes.  Backend geometries are mapped to the
+current fit geometry by a proper Kabsch rotation, and Cartesian derivatives and
+symmetry-adapted displacement bases are transported by that same rotation.
+
+The intermolecular part of the \texttt{SONIC} contract uses fragment
+translations and exponential-map relative rotations.  \texttt{MORPHEUS}
+shares the \texttt{SMITH} local-chart atlas: chart rebasing transports both the
+rotation values and their Wilson rows by the composition Jacobian.  The fit
+therefore sees a continuous local parametrization even when a fragment
+rotation crosses the principal logarithm boundary.  Constraints that are not
+themselves selected \texttt{SONIC} variables are projected onto the active
+\texttt{SONIC} subspace, rather than enlarging the fit with an uncontrolled
+redundant coordinate.  These choices are particularly important for weak
+complexes, where a small rigid-frame inconsistency can otherwise masquerade as
+an intermolecular structural correction.
+
 The standard input is either a semiexperimental job file
 (\texttt{oracle.semiexp.job.v1}, with a legacy
 \texttt{merlino.semiexp.job.v1} reader) or an enriched \texttt{xyzin}
