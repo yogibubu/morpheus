@@ -31,10 +31,11 @@ Semiexperimental equilibrium structures combine high-resolution rotational spect
 
 This paper introduces \texttt{MORPHEUS} (Model Optimization and Refinement from Perceived Hierarchy, Equivalence, Uncertainty, and Symmetry), a framework that turns model formulation into a reproducible, auditable construction step constrained by symmetry and rank. The semiexperimental refinements reported here provide the principal validation, but the construction is more general: it builds constrained refinement models from topology, symmetry, rank, isotope coverage, and external reference information before any numerical least-squares solution is attempted. Molecular topology defines the primitive coordinate space, symmetry selects the admissible active subspace, isotopic coverage determines which directions are experimentally supported, and electronic-structure reference information enters only through explicit primitive-coordinate constraints, predicates, or parameter classes.
 
-Within MATRIX, ORACLE supplies the frozen topology, point-group operations and
-equivalence classes, while SMITH constructs the corresponding SONIC coordinate
-contract; MORPHEUS formulates and solves the inverse model without repeating
-either molecular perception or coordinate construction.
+Within MATRIX, ORACLE supplies topology, point-group operations, continuous
+equivalence descriptors and the redundant primitive/Wilson-B source. SMITH
+constructs the corresponding SONIC coordinate contract, and MORPHEUS
+formulates and solves the inverse model without repeating either molecular
+perception or coordinate construction.
 
 Two equivalent active spaces are available: symmetry-adapted generalized internal coordinates built from homogeneous primitive families, and symmetry-adapted Cartesian displacements after removal of translations and rotations. The chemical interface remains internal-coordinate based, so bond, angle, dihedral, out-of-plane, ring, and local-frame relations have the same meaning whichever numerical basis is used. Validation on acyclic, cyclic, planar, fused, bridged, and flexible systems shows that rank, effective dimension, residuals, structural parameters, and propagated uncertainties are reproduced without manual coordinate-model formulation. In the norbornane-derived series, norcamphor probes a bridged reduced-dimensionality model and camphor adds methyl substitution as a stricter validation test: the accepted no-Kraitchman BDPCS3-predicate model gives sub-milliangstrom bond corrections, whereas superficially competitive variants based on unsupported hydrogen directions or tight Kraitchman predicates are rejected because they distort the geometry. The testosterone case study then shows that accurate quantum chemical equilibrium geometries, accelerated vibrational corrections, and generated topology-constrained refinement models can be chained for molecular systems containing about 50 atoms, where isotope-rich data sets required by conventional refinement strategies are generally unavailable.
 
@@ -77,10 +78,10 @@ refinement model.
 In this implementation, the non-redundant internal-coordinate family is
 \texttt{SONIC} (Symmetry-Oriented Non-redundant Internal Coordinates), and
 \texttt{SMITH} is the standalone builder that constructs the corresponding
-coordinate contracts. The contract contains the non-redundant,
-symmetry-adapted GIC basis, the symmetry-adapted Cartesian reference spaces,
-symmetry labels, provenance, and the analytic Wilson $\mathbf{B}$ rows needed
-by downstream modules. \texttt{MORPHEUS} is the refinement layer built on those
+coordinate contracts. ORACLE provides the redundant primitive coordinates and
+their analytic Wilson $\mathbf{B}$ rows; SMITH transforms this source into the
+non-redundant, symmetry-adapted GIC basis and symmetry-adapted Cartesian
+reference spaces, with symmetry labels and provenance. \texttt{MORPHEUS} is the refinement layer built on those
 frozen definitions: it selects experimentally supported directions, applies
 constraints, classes, and predicates, solves the least-squares problem, and
 tests the stability of the accepted model. The molecular-state perception is
@@ -94,6 +95,10 @@ multiple-bond label.
 Thus topology, symmetry operations, chemical descriptors, coordinate
 definitions, and derivative conventions are fixed once; \texttt{MORPHEUS} uses
 that contract without regenerating the model during refinement.
+The parameter classes introduced below are statistical equality or predicate
+relations for the semiexperimental inverse problem. They are not ZION atom
+classes or force-field parameters: construction and evaluation of ZION remain
+the separate responsibility of ARCHITECT, and are not required by MORPHEUS.
 
 Recent workflows have extended semiexperimental refinement by combining
 computed starting geometries, quantum chemical (QC) vibrational corrections, and
@@ -201,7 +206,9 @@ basis used to solve the refinement.
 \subsection{Primitive and Work Coordinates}
 
 The coordinate construction starts from Cartesian geometry and perceived
-topology. Bonded pairs and ring connectivity define a primitive set of internal
+topology. ORACLE uses bonded pairs and ring connectivity to define the
+redundant primitive internal-coordinate (PIC) set and its Wilson matrix. The
+PIC set contains
 coordinates:  stretches, valence angles, torsions, out-of-plane deformations,
 linear bends, and ring-specific primitives. Redundancy is intentional at this
 stage because it lets topology, not a manually chosen reference path, decide
@@ -228,10 +235,10 @@ with chemically meaningful constraints. In the GIC route, topological
 primitives are reduced within homogeneous families, so stretches, bends,
 torsions, out-of-plane motions, and ring coordinates cannot replace one
 another during rank reduction.\cite{PulayFogarasi1992,Peng1996Redundant,Baker1996Delocalized,BakkenHelgaker2002,Marenich2025GIC}
-The graph algorithms that generate the local primitive families, remove
-within-family redundancies, form their symmetry-adapted combinations, and
-evaluate the associated Wilson $\mathbf{B}$ matrices are implemented in
-\texttt{SMITH} as \texttt{SONIC} coordinate contracts. They are documented in
+ORACLE generates the local primitive families and evaluates their Wilson
+$\mathbf{B}$ matrix. SMITH consumes that frozen source, removes within-family
+redundancies, forms the symmetry-adapted combinations, and stores the
+transformed rows as \texttt{SONIC} coordinate contracts. They are documented in
 the companion SMITH/SONIC methodological manuscript;
 the present paper uses the resulting coordinate and derivative objects only as
 the fixed input to the refinement-model layer. This boundary is deliberate: the
@@ -1073,10 +1080,11 @@ represented by explicit model relations.
 This series also makes the input claim concrete. Once $B_0$ constants and
 rovibrational corrections $\Delta B_\mathrm{vib}$ are available, the
 user transcribes the parent Cartesian geometry, the isotope
-substitutions, and the tabulated corrections. The program then perceives the
-topology and symmetry, constructs the non-redundant coordinate model, and
-the model layer applies any necessary constraints, predicates, or parameter
-classes as explicit statistical relations.
+substitutions, and the tabulated corrections. The workflow then calls ORACLE
+for perception and the primitive/B source, calls SMITH for the non-redundant
+coordinate model, and lets the MORPHEUS model layer apply any necessary
+constraints, predicates, or parameter classes as explicit statistical
+relations.
 
 For maleic anhydride no auxiliary relation is introduced and 21
 non-redundant symmetry coordinates are generated, of which the eight $A_1$
@@ -1407,9 +1415,9 @@ from QC geometries when hydrogen-related directions are only partly supported.
 ]
 \node[stepbox] (pcs) {QC reference\\Cartesian geometry\\and $\Delta B_\mathrm{vib}$};
 \node[stepbox, right=0.65cm of pcs] (job) {MORPHEUS input\\geometry, isotopologues,\\$B_0$, $\Delta B_\mathrm{vib}$, weights};
-\node[chemobox, right=0.65cm of job] (syn) {Synthon and isotope\\coverage descriptors};
+\node[chemobox, right=0.65cm of job] (syn) {ORACLE primitives, symmetry,\\synthons and isotope coverage};
 \node[chemobox, below=0.65cm of syn] (adv) {Advisor\\constraints, predicates,\\parameter classes};
-\node[autobox, below=0.65cm of job] (gic) {GIC builder\\topology, non-redundant\\GICs, symmetry labels};
+\node[autobox, below=0.65cm of job] (gic) {SMITH/SONIC builder\\non-redundant GICs\\and symmetry labels};
 \node[fitbox, below=1.05cm of gic, xshift=2.45cm] (fit) {MORPHEUS least squares\\totally symmetric active space\\with projected constraints};
 \node[fitbox, below=0.65cm of fit] (out) {Cartesian $r_e^\mathrm{SE}$\\primitive internals, errors,\\residuals, Hessian check};
 \draw[flowarrow] (pcs) -- (job);
@@ -1694,9 +1702,10 @@ The benchmark input/output files, numerical audit trails, and statistical
 diagnostics are documented in the Supporting Information. The code implementing
 the least-squares refinement engine, job/\texttt{xyzin} readers, coordinate
 contracts, and final-validation audit used for the benchmarks reported here is
-available from the author upon request. The intramolecular coordinate
-definitions and Wilson $\mathbf{B}$ matrices used in the present work were
-generated as \texttt{SONIC} contracts by \texttt{SMITH}; the companion
+available from the author upon request. The intramolecular primitive
+definitions and Wilson $\mathbf{B}$ source used in the present work were
+generated by \texttt{ORACLE}; their non-redundant transformations were stored
+as \texttt{SONIC} contracts by \texttt{SMITH}. The companion
 \texttt{SMITH}/\texttt{SONIC} methodological manuscript is available as a
 companion work and can be supplied as confidential supplementary material for
 referees if required by the journal. This does not affect the present
