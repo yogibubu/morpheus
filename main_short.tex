@@ -31,6 +31,11 @@ Semiexperimental equilibrium structures combine high-resolution rotational spect
 
 This paper introduces \texttt{MORPHEUS} (Model Optimization and Refinement from Perceived Hierarchy, Equivalence, Uncertainty, and Symmetry), a framework that turns model formulation into a reproducible, auditable construction step constrained by symmetry and rank. The semiexperimental refinements reported here provide the principal validation, but the construction is more general: it builds constrained refinement models from topology, symmetry, rank, isotope coverage, and external reference information before any numerical least-squares solution is attempted. Molecular topology defines the primitive coordinate space, symmetry selects the admissible active subspace, isotopic coverage determines which directions are experimentally supported, and electronic-structure reference information enters only through explicit primitive-coordinate constraints, predicates, or parameter classes.
 
+Within MATRIX, ORACLE supplies the frozen topology, point-group operations and
+equivalence classes, while SMITH constructs the corresponding SONIC coordinate
+contract; MORPHEUS formulates and solves the inverse model without repeating
+either molecular perception or coordinate construction.
+
 Two equivalent active spaces are available: symmetry-adapted generalized internal coordinates built from homogeneous primitive families, and symmetry-adapted Cartesian displacements after removal of translations and rotations. The chemical interface remains internal-coordinate based, so bond, angle, dihedral, out-of-plane, ring, and local-frame relations have the same meaning whichever numerical basis is used. Validation on acyclic, cyclic, planar, fused, bridged, and flexible systems shows that rank, effective dimension, residuals, structural parameters, and propagated uncertainties are reproduced without manual coordinate-model formulation. In the norbornane-derived series, norcamphor probes a bridged reduced-dimensionality model and camphor adds methyl substitution as a stricter validation test: the accepted no-Kraitchman BDPCS3-predicate model gives sub-milliangstrom bond corrections, whereas superficially competitive variants based on unsupported hydrogen directions or tight Kraitchman predicates are rejected because they distort the geometry. The testosterone case study then shows that accurate quantum chemical equilibrium geometries, accelerated vibrational corrections, and generated topology-constrained refinement models can be chained for molecular systems containing about 50 atoms, where isotope-rich data sets required by conventional refinement strategies are generally unavailable.
 
 \end{abstract}
@@ -78,9 +83,14 @@ symmetry labels, provenance, and the analytic Wilson $\mathbf{B}$ rows needed
 by downstream modules. \texttt{MORPHEUS} is the refinement layer built on those
 frozen definitions: it selects experimentally supported directions, applies
 constraints, classes, and predicates, solves the least-squares problem, and
-tests the stability of the accepted model. The molecular-state perception used
-by \texttt{SMITH} follows the continuous molecular perception and synthon
-descriptors introduced in earlier work.\cite{Lazzari2020Proxima,Lazzari2024SynthonPCS}
+tests the stability of the accepted model. The molecular-state perception is
+supplied by \texttt{ORACLE}, which develops the continuous molecular perception
+and synthon descriptors introduced in earlier work.\cite{Lazzari2020Proxima,Lazzari2024SynthonPCS}
+The current contract keeps the continuous topological edge order distinct from
+the Mayer/Pauling multiplicity and resolves the latter into $\sigma$,
+first-$\pi$ and second-$\pi$ ($\pi\pi$) indices; the latter two are retained
+as separate synthon-similarity axes rather than collapsed into one
+multiple-bond label.
 Thus topology, symmetry operations, chemical descriptors, coordinate
 definitions, and derivative conventions are fixed once; \texttt{MORPHEUS} uses
 that contract without regenerating the model during refinement.
@@ -196,10 +206,15 @@ coordinates:  stretches, valence angles, torsions, out-of-plane deformations,
 linear bends, and ring-specific primitives. Redundancy is intentional at this
 stage because it lets topology, not a manually chosen reference path, decide
 which combinations survive. For cyclic systems, endocyclic valence-angle
-combinations describe ring bending, whereas the endocyclic torsional manifold
-is reported through ring-puckering descriptors such as $q$ and $\phi$. These
-descriptors are constructed from the underlying dihedral combinations but are
-more stable and interpretable than individual endocyclic torsions, so
+combinations describe ring bending, whereas \(n-3\) cyclic Fourier
+combinations of native signed out-of-plane sources define the ring-puckering
+rows. For the ordered stencil \(D(a,b,c,d)\), the native source is
+\(U(b,a,d,c)\); the dihedral fixes only the cyclic ordering. Global
+Cremer--Pople-like descriptors such as $q$ and $\phi$ are derived from these
+rows. The local U construction is their closest curvilinear analogue, not an
+identification with the global amplitudes and phases.  For each cosine--sine
+pair, \(q_m=[(RPck_m^c)^2+(RPck_m^s)^2]^{1/2}\) and
+\(\phi_m=\operatorname{atan2}(RPck_m^s,RPck_m^c)\), so
 monocyclic, fused-ring, bridged, and polycyclic systems are handled by the
 same machinery.\cite{CremerPople1975} This
 primitive layer is also the chemical interface for constraints, predicates,
@@ -216,8 +231,8 @@ another during rank reduction.\cite{PulayFogarasi1992,Peng1996Redundant,Baker199
 The graph algorithms that generate the local primitive families, remove
 within-family redundancies, form their symmetry-adapted combinations, and
 evaluate the associated Wilson $\mathbf{B}$ matrices are implemented in
-\texttt{SMITH} as \texttt{SONIC} coordinate contracts. They are documented in a
-companion methodological manuscript, currently in preparation for publication;
+\texttt{SMITH} as \texttt{SONIC} coordinate contracts. They are documented in
+the companion SMITH/SONIC methodological manuscript;
 the present paper uses the resulting coordinate and derivative objects only as
 the fixed input to the refinement-model layer. This boundary is deliberate: the
 present work examines how generated coordinate spaces are coupled to isotopic
@@ -739,16 +754,19 @@ remain external diagnostics rather than hidden constraints.
 \section{Implementation and Reproducibility}
 
 The implementation used for the present calculations is organized around
-reusable molecular-state, coordinate, and derivative services. \texttt{SMITH}
-builds or consumes the frozen molecular state from Cartesian atoms and nuclear
+reusable molecular-state, coordinate, and derivative services. \texttt{ORACLE}
+builds and freezes the molecular state from Cartesian atoms and nuclear
 charges, topology, point-group operations, perception descriptors, and
-synthons, and stores the resulting \texttt{SONIC} coordinate contract,
+synthons, including atomic $\pi$ and $\pi\pi$ indices.  \texttt{SMITH}
+consumes that state and stores the resulting
+\texttt{SONIC} coordinate contract,
 including family labels, symmetry-operation residual margins, SALC gauge
 policy, and provenance. The same \texttt{SMITH}/\texttt{SONIC} contract is
 then used to evaluate the Wilson $\mathbf{B}$ matrix for any compatible
 Cartesian geometry. During refinement, \texttt{MORPHEUS} reuses the stored
-coordinate model and updates only the derivative information needed for the
-current step.
+coordinate model and, in the symmetry-Cartesian route, the same frozen ORACLE
+operation matrices and atom permutations.  It updates only the derivative
+information needed for the current step.
 
 For non-covalent complexes, the refinement also requires a common Cartesian
 gauge across isotopologues, electronic-structure backends, and fit iterations.
@@ -865,7 +883,7 @@ Input model & Internal tree & User model & Cartesian topology \\
 Active variables & Manual & Manual & Rank-pruned \\
 Rings/bridges & Tree-dependent & User-defined & Graph-derived primitives \\
 Missing isotopes & Manual constraints & Manual classes & Generated constraints \\
-Symmetry & In model & User supplied & Detected and audited \\
+Symmetry & In model & User supplied & Consumed from ORACLE and audited \\
 Output audit & Supplied model & Workflow dependent & Manifest and covariance \\
 \bottomrule
 \end{tabular}
@@ -1075,7 +1093,7 @@ internal-coordinate relations, which are subsequently projected onto the
 algorithmically generated active space. The same representation also makes
 ring coordinates explicit: endocyclic bends are generated from primitive
 valence angles, while ring-puckering descriptors such as $q$ and $\phi$ are
-constructed from the endocyclic dihedral manifold rather than selected as
+derived from the cyclic U-based (RPck) block rather than selected as
 molecule-specific torsions.
 
 \begin{table*}[t]
@@ -1095,7 +1113,7 @@ C--O--H angle & \texttt{AOH = A(C,O,H)} & preserves hydroxyl orientation \\
 H--N--H angle & \texttt{HNH = A(H,N,H')} & constrains amino frame \\
 NH$_2$ wag & \texttt{WNH2 = OOP(H,N,H',C)} & removes unsupported wagging direction \\
 Endocyclic bend & \texttt{RB = sum c(i) A(i,j,k)} & defines ring valence coordinate \\
-Ring puckering & \texttt{q, phi = f(D-ring set)} & reports puckering from endocyclic dihedrals \\
+Ring puckering & \texttt{RPck = sum c(i) U(i); q, phi = f(RPck)} & U-based local puckering with derived global descriptors \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -1679,8 +1697,8 @@ contracts, and final-validation audit used for the benchmarks reported here is
 available from the author upon request. The intramolecular coordinate
 definitions and Wilson $\mathbf{B}$ matrices used in the present work were
 generated as \texttt{SONIC} contracts by \texttt{SMITH}; the companion
-\texttt{SMITH}/\texttt{SONIC} methodological manuscript is in preparation for
-publication and can be supplied as confidential supplementary material for
+\texttt{SMITH}/\texttt{SONIC} methodological manuscript is available as a
+companion work and can be supplied as confidential supplementary material for
 referees if required by the journal. This does not affect the present
 applications, because the final-validation workflow replays accepted models in
 both the generated GIC basis and the independent symmetry-adapted Cartesian
