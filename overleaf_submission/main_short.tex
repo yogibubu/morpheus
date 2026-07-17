@@ -342,10 +342,14 @@ between each retained coordinate and the chemical relation used for
 constraints, predicates, classes, and uncertainty propagation; only residual
 linear dependencies between already interpretable coordinates are removed in
 the final pruning step.
-Cartesian displacements associated with GIC corrections use a rank-controlled
-minimum-norm pseudoinverse with explicit singular-value thresholds. The
-symmetry-Cartesian route uses the same selection, constraint projection, and
-covariance propagation.
+MORPHEUS formulates corrections in the selected GIC space but does not own the
+internal-to-Cartesian back-transformation. It submits the frozen coordinate
+definition and requested correction to LINK, whose rank-controlled
+minimum-norm or nonlinear realization service returns the achieved Cartesian
+geometry. MORPHEUS then evaluates the residuals and updates its refinement
+model from that realized geometry. The symmetry-Cartesian route uses the same
+selection, constraint projection, and covariance propagation, but needs no
+Wilson-B inversion.
 
 
 \subsection{Constraints, Predicates, and Parameter Classes}

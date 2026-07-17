@@ -26,10 +26,12 @@ The manuscript introduces MORPHEUS, a framework that turns the formulation of
 semiexperimental refinement models into a reproducible topology-, symmetry-,
 and rank-audited procedure. Rather than assuming that the internal-coordinate
 model has already been selected by expert intervention, MORPHEUS uses
-SMITH-generated SONIC coordinate contracts and Wilson B matrices, applies
-symmetry and homogeneous rank reduction, projects constraints and predicates
-consistently, and propagates uncertainties back to chemically interpretable
-structural parameters.
+SMITH-generated SONIC coordinate contracts, applies symmetry and homogeneous
+rank reduction, projects constraints and predicates consistently, and
+propagates uncertainties back to chemically interpretable structural
+parameters. When an internal-coordinate correction must be realized,
+MORPHEUS delegates that operation to the LINK geometry service rather than
+owning a second Wilson-B inversion algorithm.
 
 The work is, in my view, well aligned with the scope of \emph{The Journal of
 Chemical Physics} because it addresses a general problem at the interface of

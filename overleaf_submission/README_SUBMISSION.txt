@@ -10,5 +10,5 @@ main_short.bbl is included for journal submission systems that request the bibli
 data/camphor contains the archived CSV/JSON/XYZ files used to generate the camphor validation tables and figure; these files are included for reproducibility and are not required by LaTeX at compile time.
 
 Note for submission:
-  The coordinate definitions and Wilson B matrices used by MORPHEUS are SMITH-generated SONIC coordinate contracts.
+  The coordinate definitions used by MORPHEUS are SMITH-generated SONIC contracts. Any internal-to-Cartesian realization is delegated to LINK; MORPHEUS does not own a separate Wilson-B inversion.
   The companion SMITH/SONIC methodological manuscript is in preparation for publication and can be uploaded as confidential supplementary material for referees if the journal requests it.
