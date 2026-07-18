@@ -14,7 +14,7 @@ Figure 6. Four-panel glycine I comparison. Upper panels report fitted bond lengt
 
 Figure 7. Camphor validation. Density plots summarize bond-length and valence-angle shifts from the accepted reference, while a logarithmic scatter plot separates stable model variants from misleading fits with large structural distortion.
 
-Figure 8. End-to-end glycine workflow from quantum-chemical geometry, vibrational corrections, isotopologue data, and ORACLE perception through SONIC generation, advisor constraints, MORPHEUS least squares, and the final semiexperimental structure with diagnostics.
+Figure 8. End-to-end glycine workflow from quantum-chemical geometry, vibrational corrections, isotopologue data, and molecular perception through SONIC generation, advisor constraints, MORPHEUS least squares, and the final semiexperimental structure with diagnostics.
 
 Figure 9. Three-dimensional ball-and-stick rendering of testosterone, emphasizing the size and fused-ring topology of the 49-atom large-molecule demonstration used to test automated coordinate and refinement-model construction.
 
