@@ -19,3 +19,4 @@
 # Temporary render/build folders
 tmp/
 tmp_render/
+output/

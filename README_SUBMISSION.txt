@@ -8,7 +8,8 @@ Compile on Overleaf or locally with:
 Included files are restricted to manuscript sources, bibliography, required generated tables, required figures, and compiled PDFs.
 main_short.bbl is included for journal submission systems that request the bibliography file.
 data/camphor contains the archived CSV/JSON/XYZ files used to generate the camphor validation tables and figure; these files are included for reproducibility and are not required by LaTeX at compile time.
+graphical_toc.pdf and figures/graphical_toc.png provide the text-free graphical TOC at the same journal canvas used for the companion MATRIX manuscripts.
 
 Note for submission:
-  The coordinate definitions and Wilson B matrices used by MORPHEUS are SMITH-generated SONIC coordinate contracts.
-  The companion SMITH/SONIC methodological manuscript is in preparation for publication and can be uploaded as confidential supplementary material for referees if the journal requests it.
+  The coordinate definitions used by MORPHEUS are SMITH-generated SONIC contracts. Any internal-to-Cartesian realization is delegated to LINK; MORPHEUS does not own a separate Wilson-B inversion.
+  The companion SMITH/SONIC methodological manuscript is available as a preprint and can be uploaded as confidential supplementary material for referees if the journal requests it.
