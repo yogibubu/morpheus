@@ -1,0 +1,13 @@
+[[isotopologues]]
+label = "Parent"
+substitutions = ""
+[isotopologues.constants]
+A_MHz = 5932.643730
+B_MHz = 2363.272417
+C_MHz = 1728.290590
+[isotopologues.vibrational_correction]
+delta_A_MHz = 41.671270
+delta_B_MHz = 14.711583
+delta_C_MHz = 9.067410
+source = "Jahn et al. PCCP 2020 Table S3 Be minus Table 1 B0"
+convention = "add"

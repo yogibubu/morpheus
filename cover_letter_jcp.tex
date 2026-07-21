@@ -29,9 +29,9 @@ model has already been selected by expert intervention, MORPHEUS uses
 SONIC coordinate contracts, applies symmetry and homogeneous
 rank reduction, projects constraints and predicates consistently, and
 propagates uncertainties back to chemically interpretable structural
-parameters. When an internal-coordinate correction must be realized,
-MORPHEUS delegates that operation to a dedicated geometry-realization service
-rather than owning a second Wilson-B inversion algorithm.
+parameters. The form of every retained SONIC variable is directly inspectable
+through its primitive expansion, units, symmetry label, Cartesian fingerprint,
+and role in the refinement model.
 
 The work is, in my view, well aligned with the scope of \emph{The Journal of
 Chemical Physics} because it addresses a general problem at the interface of
@@ -40,8 +40,8 @@ chemistry: how to combine high-resolution experimental data, computed
 vibrational and electronic corrections, topology, symmetry, and external
 reference information in a controlled statistical model. The validation spans
 acyclic, cyclic, planar, fused, bridged, and flexible molecules. A
-large-molecule testosterone case study further shows that accurate quantum
-chemical equilibrium structures, accelerated vibrational corrections, and
+large-molecule testosterone case study further shows that accurate
+quantum-chemical equilibrium structures, accelerated vibrational corrections, and
 algorithmically generated topology-constrained refinement models can be chained
 for systems containing about 50 atoms, where conventional isotope-rich
 semiexperimental analyses are not currently practical.
@@ -52,10 +52,9 @@ relations, parameter classes, predicates, and audit trails. The submitted
 Supporting Information documents the benchmark inputs, diagnostics, and the
 large-molecule class/predicate variants used in the paper.
 
-The coordinate-generation layer used here is the subject of a companion
-SONIC methodological preprint. Its arXiv identifier will be inserted in
-the manuscript and this letter immediately after arXiv processing is complete.
-The preprint can also be supplied directly for editorial evaluation if needed.
+The coordinate-generation layer used here is the subject of the companion
+SONIC methodological preprint, publicly available as
+\href{https://arxiv.org/abs/2607.16550}{arXiv:2607.16550}.
 
 This manuscript is original, has not been published previously, and is not
 under consideration elsewhere. I confirm that there are no conflicts of

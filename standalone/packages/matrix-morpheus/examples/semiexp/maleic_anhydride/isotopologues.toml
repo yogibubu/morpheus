@@ -1,0 +1,199 @@
+[[isotopologues]]
+label = "Main"
+substitutions = ""
+[isotopologues.constants]
+A_MHz = 6842.489000
+B_MHz = 2467.614000
+C_MHz = 1813.628000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 49.780000
+delta_B_MHz = 14.180000
+delta_C_MHz = 11.160000
+source = "Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.421000
+delta_B_MHz = 0.066000
+delta_C_MHz = 0.012000
+source = "inferred from Table 5 Be - B0 - rovibrational correction"
+convention = "add"
+
+[[isotopologues]]
+label = "d2"
+substitutions = "8:2;9:2"
+[isotopologues.constants]
+A_MHz = 6106.159000
+B_MHz = 2423.551000
+C_MHz = 1734.998000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 41.510000
+delta_B_MHz = 13.890000
+delta_C_MHz = 10.460000
+source = "Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.331000
+delta_B_MHz = 0.069000
+delta_C_MHz = 0.022000
+source = "inferred from Table 5 Be - B0 - rovibrational correction"
+convention = "add"
+
+[[isotopologues]]
+label = "13C2"
+substitutions = "2:13"
+[isotopologues.constants]
+A_MHz = 6841.501000
+B_MHz = 2452.607000
+C_MHz = 1805.442000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 41.510000
+delta_B_MHz = 13.890000
+delta_C_MHz = 10.460000
+source = "Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 8.419000
+delta_B_MHz = 0.153000
+delta_C_MHz = 0.578000
+source = "inferred from Table 5 Be - B0 - rovibrational correction"
+convention = "add"
+
+[[isotopologues]]
+label = "13C3"
+substitutions = "3:13"
+[isotopologues.constants]
+A_MHz = 6691.282000
+B_MHz = 2462.240000
+C_MHz = 1799.954000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 48.190000
+delta_B_MHz = 14.110000
+delta_C_MHz = 11.030000
+source = "Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.398000
+delta_B_MHz = 0.070000
+delta_C_MHz = 0.016000
+source = "inferred from Table 5 Be - B0 - rovibrational correction"
+convention = "add"
+
+[[isotopologues]]
+label = "18O1"
+substitutions = "1:18"
+[isotopologues.constants]
+A_MHz = 6688.643000
+B_MHz = 2467.808000
+C_MHz = 1802.755000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 49.170000
+delta_B_MHz = 13.970000
+delta_C_MHz = 11.010000
+source = "Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.407000
+delta_B_MHz = 0.072000
+delta_C_MHz = 0.015000
+source = "inferred from Table 5 Be - B0 - rovibrational correction"
+convention = "add"
+
+[[isotopologues]]
+label = "18O6"
+substitutions = "6:18"
+[isotopologues.constants]
+A_MHz = 6790.337000
+B_MHz = 2354.397000
+C_MHz = 1748.276000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 49.120000
+delta_B_MHz = 13.410000
+delta_C_MHz = 10.650000
+source = "Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.423000
+delta_B_MHz = 0.063000
+delta_C_MHz = 0.014000
+source = "inferred from Table 5 Be - B0 - rovibrational correction"
+convention = "add"
+
+[[isotopologues]]
+label = "13C2d2"
+substitutions = "2:13;8:2;9:2"
+[isotopologues.constants]
+A_MHz = 6104.567000
+B_MHz = 2409.078000
+C_MHz = 1727.440000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 41.400000
+delta_B_MHz = 13.670000
+delta_C_MHz = 10.340000
+source = "Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.343000
+delta_B_MHz = 0.062000
+delta_C_MHz = 0.010000
+source = "inferred from Table 5 Be - B0 - rovibrational correction"
+convention = "add"
+
+[[isotopologues]]
+label = "13C3d2"
+substitutions = "3:13;8:2;9:2"
+[isotopologues.constants]
+A_MHz = 5993.203000
+B_MHz = 2418.373000
+C_MHz = 1723.126000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 40.310000
+delta_B_MHz = 13.830000
+delta_C_MHz = 10.350000
+source = "Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.327000
+delta_B_MHz = 0.067000
+delta_C_MHz = 0.014000
+source = "inferred from Table 5 Be - B0 - rovibrational correction"
+convention = "add"
+
+[[isotopologues]]
+label = "18O1d2"
+substitutions = "1:18;8:2;9:2"
+[isotopologues.constants]
+A_MHz = 5971.996000
+B_MHz = 2423.742000
+C_MHz = 1724.104000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 41.020000
+delta_B_MHz = 13.710000
+delta_C_MHz = 10.340000
+source = "Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.314000
+delta_B_MHz = 0.068000
+delta_C_MHz = 0.006000
+source = "inferred from Table 5 Be - B0 - rovibrational correction"
+convention = "add"
+
+[[isotopologues]]
+label = "18O6d2"
+substitutions = "6:18;8:2;9:2"
+[isotopologues.constants]
+A_MHz = 6058.195000
+B_MHz = 2314.121000
+C_MHz = 1674.540000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 41.050000
+delta_B_MHz = 13.170000
+delta_C_MHz = 10.030000
+source = "Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.335000
+delta_B_MHz = 0.059000
+delta_C_MHz = 0.010000
+source = "inferred from Table 5 Be - B0 - rovibrational correction"
+convention = "add"

@@ -1,0 +1,112 @@
+slug,name,atoms,level,path
+1_2_3_thiadiazole,"1,2,3-thiadiazole",7,SE,"xyz/1,2,3-thiadiazole.xyz"
+1_2_4_thiadiazole,"1,2,4-thiadiazole",7,SE,"xyz/1,2,4-thiadiazole.xyz"
+1_2_5_thiadiazole,"1,2,5-thiadiazole",7,SE,"xyz/1,2,5-thiadiazole.xyz"
+1_3_4_oxadiazole,"1,3,4-oxadiazole",7,SE,"xyz/1,3,4-oxadiazole.xyz"
+1_3_4_thiadiazole,"1,3,4-thiadiazole",7,SE,"xyz/1,3,4-thiadiazole.xyz"
+1_chloro_1_fluoroethene,1-chloro-1-fluoroethene,6,SE,xyz/1-chloro-1-fluoroethene.xyz
+1_chloro_2_2_difluoroethene,"1-chloro-2,2-difluoroethene",6,SE,"xyz/1-chloro-2,2-difluoroethene.xyz"
+1_chloro_2_fluoroethene,1-chloro-2-fluoroethene,6,SE,xyz/1-chloro-2-fluoroethene.xyz
+1_phosphapropyne,1-phosphapropyne,6,SE,xyz/1-phosphapropyne.xyz
+2_fluoropyridine,2-fluoropyridine,11,SE,xyz/2-fluoropyridine.xyz
+2_thiouracil,2-thiouracil,12,SE,xyz/2-thiouracil.xyz
+3_fluoropyridine,3-fluoropyridine,11,SE,xyz/3-fluoropyridine.xyz
+allene,allene,7,SE,xyz/allene.xyz
+aminoacetonitrile,aminoacetonitrile,8,SE,xyz/aminoacetonitrile.xyz
+ammonia,ammonia,4,SE,xyz/ammonia.xyz
+aziridine,aziridine,8,SE,xyz/aziridine.xyz
+benzene,benzene,12,SE,xyz/benzene.xyz
+benzonitrile,benzonitrile,13,SE,xyz/benzonitrile.xyz
+borane_ammonia,borane ammonia,8,SE,xyz/borane ammonia.xyz
+borinic_acid,borinic acid,5,SE,xyz/borinic acid.xyz
+butadiene,butadiene,10,SE,xyz/butadiene.xyz
+butadiyne,butadiyne,6,SE,xyz/butadiyne.xyz
+carbon_dioxide,carbon dioxide,3,SE,xyz/carbon dioxide.xyz
+chlorodifluoromethane,chlorodifluoromethane,5,SE,xyz/chlorodifluoromethane.xyz
+chlorofluoromethane,chlorofluoromethane,5,SE,xyz/chlorofluoromethane.xyz
+cis_1_chloro_2_fluoroethylene,cis-1-chloro-2-fluoroethylene,6,SE,xyz/cis-1-chloro-2-fluoroethylene.xyz
+cis_acrolein,cis-acrolein,8,SE,xyz/cis-acrolein.xyz
+cis_formic_acid,cis-formic acid,5,SE,xyz/cis-formic acid.xyz
+cis_hexatriene,cis-hexatriene,,SE,xyz/cis-hexatriene.xyz
+cis_methyl_formate,cis-methyl formate,8,SE,xyz/cis-methyl formate.xyz
+cyclobutene,cyclobutene,10,SE,xyz/cyclobutene.xyz
+cyclohexane,cyclohexane,18,SE,xyz/cyclohexane.xyz
+cyclopropane,cyclopropane,9,SE,xyz/cyclopropane.xyz
+cyclopropenone,cyclopropenone,6,SE,xyz/cyclopropenone.xyz
+dichlorodifluoromethane,dichlorodifluoromethane,5,SE,xyz/dichlorodifluoromethane.xyz
+difluoromethane,difluoromethane,5,SE,xyz/difluoromethane.xyz
+dihydroxyborane,dihydroxyborane,6,SE,xyz/dihydroxyborane.xyz
+dimethyl_ether,dimethyl ether,9,SE,xyz/dimethyl ether.xyz
+dimethyl_sulfoxide,dimethyl sulfoxide,10,SE,xyz/dimethyl sulfoxide.xyz
+dimethylsulfide,dimethylsulfide,9,SE,xyz/dimethylsulfide.xyz
+dioxirane,dioxirane,5,SE,xyz/dioxirane.xyz
+ethene,ethene,6,SE,xyz/ethene.xyz
+ethenol,ethenol,7,SE,xyz/ethenol.xyz
+ethyne,ethyne,4,SE,xyz/ethyne.xyz
+fluoroboranol,fluoroboranol,5,SE,xyz/fluoroboranol.xyz
+formaldehyde_oxide,formaldehyde oxide,5,SE,xyz/formaldehyde oxide.xyz
+formaldehyde,formaldehyde,4,SE,xyz/formaldehyde.xyz
+formaldoxime,formaldoxime,6,SE,xyz/formaldoxime.xyz
+formyl_cation,formyl cation,3,SE,xyz/formyl cation.xyz
+formyl_chloride,formyl chloride,4,SE,xyz/formyl chloride.xyz
+furan,furan,9,SE,xyz/furan.xyz
+glycidol,glycidol,11,SE,xyz/glycidol.xyz
+glycine_ip,glycine Ip,10,SE,xyz/glycine Ip.xyz
+glycolaldehyde,glycolaldehyde,8,SE,xyz/glycolaldehyde.xyz
+glycolic_acid,glycolic acid,9,SE,xyz/glycolic acid.xyz
+glyoxylic_acid,glyoxylic acid,7,SE,xyz/glyoxylic acid.xyz
+hydrogen_cyanide,hydrogen cyanide,3,SE,xyz/hydrogen cyanide.xyz
+hydrogen_disulfide,hydrogen disulfide,4,SE,xyz/hydrogen disulfide.xyz
+hydrogen_isocyanide,hydrogen isocyanide,3,SE,xyz/hydrogen isocyanide.xyz
+hydrogen_peroxide,hydrogen peroxide,4,SE,xyz/hydrogen peroxide.xyz
+hydrogen_sulfide,hydrogen sulfide,3,SE,xyz/hydrogen sulfide.xyz
+hydroxylamine,hydroxylamine,5,SE,xyz/hydroxylamine.xyz
+hypofluorous_acid,hypofluorous acid,3,SE,xyz/hypofluorous acid.xyz
+imidazole,imidazole,9,SE,xyz/imidazole.xyz
+isocyanic_acid,isocyanic acid,4,SE,xyz/isocyanic acid.xyz
+isothiocyanic_acid,isothiocyanic acid,4,SE,xyz/isothiocyanic acid.xyz
+isoxazole,isoxazole,8,SE,xyz/isoxazole.xyz
+ketene,ketene,5,SE,xyz/ketene.xyz
+maleic_anhydride,maleic anhydride,9,SE,xyz/maleic anhydride.xyz
+methane,methane,5,SE,xyz/methane.xyz
+methylene_chloride,methylene chloride,5,SE,xyz/methylene chloride.xyz
+methyleneimine,methyleneimine,5,SE,xyz/methyleneimine.xyz
+nitroxyl,nitroxyl,3,SE,xyz/nitroxyl.xyz
+o_benzyne,o-benzyne,10,SE,xyz/o-benzyne.xyz
+oxazole,oxazole,8,SE,xyz/oxazole.xyz
+oxirane,oxirane,7,SE,xyz/oxirane.xyz
+oxophosphane,oxophosphane,3,SE,xyz/oxophosphane.xyz
+peroxyformic_acid,peroxyformic acid,6,SE,xyz/peroxyformic acid.xyz
+phenol,phenol,13,SE,xyz/phenol.xyz
+phenyl_radical,phenyl radical,11,SE,xyz/phenyl radical.xyz
+phenylacetylene,phenylacetylene,14,SE,xyz/phenylacetylene.xyz
+phosphaethene,phosphaethene,5,SE,xyz/phosphaethene.xyz
+phosphine,phosphine,4,SE,xyz/phosphine.xyz
+piperidine,piperidine,17,SE,xyz/piperidine.xyz
+propadienone,propadienone,6,SE,xyz/propadienone.xyz
+propadienthione,propadienthione,6,SE,xyz/propadienthione.xyz
+propanal,propanal,10,SE,xyz/propanal.xyz
+propene,propene,9,SE,xyz/propene.xyz
+propyne,propyne,7,SE,xyz/propyne.xyz
+protonated_cyanogen,protonated cyanogen,5,SE,xyz/protonated cyanogen.xyz
+pyrazole,pyrazole,9,SE,xyz/pyrazole.xyz
+pyridazine,pyridazine,10,SE,xyz/pyridazine.xyz
+pyridine,pyridine,11,SE,xyz/pyridine.xyz
+pyrimidine,pyrimidine,10,SE,xyz/pyrimidine.xyz
+pyrrole,pyrrole,10,SE,xyz/pyrrole.xyz
+pyruvic_acid,pyruvic acid,10,SE,xyz/pyruvic acid.xyz
+succinic_anhydride,succinic anhydride,11,SE,xyz/succinic anhydride.xyz
+sulfine,sulfine,5,SE,xyz/sulfine.xyz
+sulfonium,sulfonium,4,SE,xyz/sulfonium.xyz
+sulfur_dioxide,sulfur dioxide,3,SE,xyz/sulfur dioxide.xyz
+thiazole,thiazole,8,SE,xyz/thiazole.xyz
+thiirane,thiirane,7,SE,xyz/thiirane.xyz
+thioformaldehyde,thioformaldehyde,4,SE,xyz/thioformaldehyde.xyz
+thioketene,thioketene,5,SE,xyz/thioketene.xyz
+thiophene,thiophene,9,SE,xyz/thiophene.xyz
+trans_acrolein,trans-acrolein,8,SE,xyz/trans-acrolein.xyz
+trans_formic_acid,trans-formic acid,5,SE,xyz/trans-formic acid.xyz
+trans_glyoxal,trans-glyoxal,6,SE,xyz/trans-glyoxal.xyz
+uracil,uracil,12,SE,xyz/uracil.xyz
+vinyl_fluoride,vinyl fluoride,6,SE,xyz/vinyl fluoride.xyz
+water,water,3,SE,xyz/water.xyz

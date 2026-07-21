@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matrix-trinity"
+version = "0.1.0rc5"
+description = "LINK optimization and PES workflow state for MATRIX"
+requires-python = ">=3.11"
+dependencies = [
+  "matrix-core==0.1.0rc5",
+  "matrix-chem==0.1.0rc5",
+  "matrix-link==0.1.0rc5",
+  "matrix-qm==0.1.0rc5",
+  "matrix-smith==0.1.0rc5",
+  "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+architect = ["matrix-architect==0.1.0rc5"]
+et = ["matrix-et==0.1.0rc5"]
+spectroscopy = [
+  "matrix-architect==0.1.0rc5",
+  "matrix-gaussian==0.1.0rc5",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

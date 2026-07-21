@@ -7,6 +7,7 @@
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{listings}
+\usepackage{placeins}
 
 \hypersetup{hidelinks}
 
@@ -33,7 +34,12 @@ Algorithmic Construction and Exploitation of Topology-Constrained Refinement Mod
 
 Tables~\ref{tab:benchmark-summary} and~\ref{tab:planar-pair-diagnostics}
 collect the numerical values underlying the graphical benchmark summaries in
-the main text.
+the main text. A complete representative command, Cartesian and isotopologue
+input, output manifest, and final diagnostic excerpt are given in
+Section~\ref{sec:si-input-output}. The standalone source, runnable examples,
+benchmark inputs, and machine-readable validation data are publicly available
+in the revision-pinned MORPHEUS repository at
+\url{https://github.com/yogibubu/morpheus}.
 
 \input{generated/benchmark_summary.tex}
 
@@ -716,7 +722,8 @@ included by using the tabulated $B_e$ values, equivalently as
 $\Delta B_\mathrm{el}=B_e-B_0-\Delta B_\mathrm{vib}$. No Z-matrix, manual
 coordinate model, constraints, predicates, or parameter classes were used.
 
-\subsection{Input and Manifest Excerpt}
+\subsection{Representative Input and Output}
+\label{sec:si-input-output}
 
 The complete example distributed with the code consists only of the parent
 Cartesian geometry and the isotopologue records. The command used for the
@@ -827,6 +834,13 @@ index active class value sigma label
 21 no - 6.53687463342e-16 0 GIC021 MORPHEUS B2Ang0003 irrep=B2
 \end{lstlisting}
 
+The complete files corresponding to these excerpts are distributed in the
+public repository's maleic-anhydride example directory.
+The public release also includes the executable source snapshot, all required
+internal packages, legacy benchmark inputs, and the machine-readable camphor
+validation archive used for the main-text stress test.
+
+\FloatBarrier
 \begin{table}
 \caption{Maleic anhydride refinement diagnostics. The GIC fit used moments of
 inertia for the independent $AB$ planar pair; the omitted $C$ constants are

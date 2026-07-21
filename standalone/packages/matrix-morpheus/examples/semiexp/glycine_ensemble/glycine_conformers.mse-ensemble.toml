@@ -1,0 +1,82 @@
+schema = "oracle.semiexp.ensemble.v1"
+title = "glycine conformer I and II shared class-correction fit"
+
+[fit]
+step = 1.0e-4
+rcond = 1.0e-10
+
+[acceptance]
+require_full_rank = true
+max_condition_number = 1.0e8
+min_residual_degrees_of_freedom = 1
+min_molecule_support = 2
+high_correlation_review_threshold = 0.98
+high_correlation_reject_threshold = 0.9999
+
+[[molecules]]
+name = "glycine_I"
+job = "../../../../../benchmarks/semiexp_msr/inputs/glycine/glycine_I_cs_table5_constraints.msr"
+
+[[molecules]]
+name = "glycine_II"
+job = "../../../../../benchmarks/semiexp_msr/inputs/glycine/glycine_II_dpcs3_table5_constraints.msr"
+
+[[classes]]
+name = "CC_stretch"
+kind = "stretch"
+atoms = ["C", "C"]
+
+[[classes]]
+name = "CN_stretch"
+kind = "stretch"
+atoms = ["C", "N"]
+
+[[classes]]
+name = "CO_single"
+kind = "stretch"
+atoms = ["C", "O"]
+value_min = 1.28
+
+[[classes]]
+name = "CO_carbonyl"
+kind = "stretch"
+atoms = ["C", "O"]
+value_max = 1.28
+
+[[classes]]
+name = "NH_stretch"
+kind = "stretch"
+atoms = ["N", "H"]
+
+[[classes]]
+name = "OH_stretch"
+kind = "stretch"
+atoms = ["O", "H"]
+
+[[classes]]
+name = "CCO_bend"
+kind = "bend"
+atoms = ["C", "C", "O"]
+prior_value = 0.0
+prior_sigma = 1.0e-3
+
+[[classes]]
+name = "CCN_bend"
+kind = "bend"
+atoms = ["C", "C", "N"]
+prior_value = 0.0
+prior_sigma = 1.0e-3
+
+[[classes]]
+name = "HCH_bend"
+kind = "bend"
+atoms = ["H", "C", "H"]
+prior_value = 0.0
+prior_sigma = 1.0e-3
+
+[[classes]]
+name = "HNH_bend"
+kind = "bend"
+atoms = ["H", "N", "H"]
+prior_value = 0.0
+prior_sigma = 1.0e-3

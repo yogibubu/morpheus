@@ -1,0 +1,14 @@
+schema = "oracle.semiexp.job.v1"
+title = "succinic anhydride parent-only ensemble block"
+
+[files]
+geometry = "../succinic_anhydride/parent.xyz"
+observations = "succinic_parent.toml"
+
+[fit]
+backend = "python"
+observable = "moments"
+coordinate_model = "gic"
+rotational_components = "AC"
+robust_loss = "none"
+max_iter = 120

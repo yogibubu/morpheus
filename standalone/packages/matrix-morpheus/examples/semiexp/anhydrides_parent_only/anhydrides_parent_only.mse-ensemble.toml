@@ -1,0 +1,50 @@
+schema = "oracle.semiexp.ensemble.v1"
+title = "maleic, phthalic and succinic anhydrides parent-only class-correction fit"
+
+[fit]
+step = 1.0e-4
+rcond = 1.0e-10
+
+[acceptance]
+require_full_rank = true
+max_condition_number = 1.0e8
+min_residual_degrees_of_freedom = 1
+min_molecule_support = 2
+high_correlation_review_threshold = 0.98
+high_correlation_reject_threshold = 0.9999
+
+[[molecules]]
+name = "maleic_anhydride"
+job = "maleic_parent.mse.toml"
+
+[[molecules]]
+name = "phthalic_anhydride"
+job = "phthalic_parent.mse.toml"
+
+[[molecules]]
+name = "succinic_anhydride"
+job = "succinic_parent.mse.toml"
+
+[[classes]]
+name = "CC_short"
+kind = "stretch"
+atoms = ["C", "C"]
+value_max = 1.42
+
+[[classes]]
+name = "CC_long"
+kind = "stretch"
+atoms = ["C", "C"]
+value_min = 1.42
+
+[[classes]]
+name = "CO_carbonyl"
+kind = "stretch"
+atoms = ["C", "O"]
+value_max = 1.28
+
+[[classes]]
+name = "CO_single"
+kind = "stretch"
+atoms = ["C", "O"]
+value_min = 1.28

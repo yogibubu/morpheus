@@ -1,0 +1,100 @@
+schema = "oracle.semiexp.ensemble.v1"
+title = "glycine conformer I and II synthon-typed shared class-correction fit"
+
+[fit]
+step = 1.0e-4
+rcond = 1.0e-10
+
+[acceptance]
+require_full_rank = true
+max_condition_number = 1.0e8
+min_residual_degrees_of_freedom = 1
+min_molecule_support = 2
+high_correlation_review_threshold = 0.98
+high_correlation_reject_threshold = 0.9999
+
+[[molecules]]
+name = "glycine_I"
+job = "../../../../../benchmarks/semiexp_msr/inputs/glycine/glycine_I_cs_table5_constraints.msr"
+
+[[molecules]]
+name = "glycine_II"
+job = "../../../../../benchmarks/semiexp_msr/inputs/glycine/glycine_II_dpcs3_table5_constraints.msr"
+
+[[classes]]
+name = "Ccarb_Cmethylene"
+kind = "stretch"
+atoms = ["C", "C"]
+synthon_zeff = [5.91, 5.88]
+synthon_threshold = 0.035
+
+[[classes]]
+name = "Cmethylene_N"
+kind = "stretch"
+atoms = ["C", "N"]
+synthon_zeff = [5.88, 6.96]
+synthon_threshold = 0.035
+
+[[classes]]
+name = "Ccarb_Ocarbonyl"
+kind = "stretch"
+atoms = ["C", "O"]
+synthon_zeff = [5.91, 7.865]
+synthon_threshold = 0.035
+
+[[classes]]
+name = "Ccarb_Ohydroxyl"
+kind = "stretch"
+atoms = ["C", "O"]
+synthon_zeff = [5.91, 7.95]
+synthon_threshold = 0.035
+
+[[classes]]
+name = "N_H"
+kind = "stretch"
+atoms = ["N", "H"]
+synthon_zeff = [6.96, 0.868]
+synthon_threshold = 0.035
+
+[[classes]]
+name = "Ohydroxyl_H"
+kind = "stretch"
+atoms = ["O", "H"]
+synthon_zeff = [7.95, 0.898]
+synthon_threshold = 0.035
+
+[[classes]]
+name = "Ccarb_Cmethylene_Ocarbonyl"
+kind = "bend"
+atoms = ["C", "C", "O"]
+synthon_zeff = [5.88, 5.91, 7.865]
+synthon_threshold = 0.035
+prior_value = 0.0
+prior_sigma = 1.0e-3
+
+[[classes]]
+name = "Ccarb_Cmethylene_N"
+kind = "bend"
+atoms = ["C", "C", "N"]
+synthon_zeff = [5.91, 5.88, 6.96]
+synthon_threshold = 0.035
+prior_value = 0.0
+prior_sigma = 1.0e-3
+
+[[classes]]
+name = "H_Cmethylene_H"
+kind = "bend"
+atoms = ["H", "C", "H"]
+synthon_zeff = [0.838, 5.88, 0.838]
+synthon_threshold = 0.035
+prior_value = 0.0
+prior_sigma = 1.0e-3
+
+[[classes]]
+name = "H_N_H"
+kind = "bend"
+atoms = ["H", "N", "H"]
+synthon_zeff = [0.868, 6.96, 0.868]
+synthon_threshold = 0.035
+prior_value = 0.0
+prior_sigma = 1.0e-3

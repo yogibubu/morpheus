@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matrix-link"
+version = "0.1.0rc5"
+description = "MATRIX internal-to-Cartesian realization and geometry-link services"
+requires-python = ">=3.11"
+dependencies = [
+  "matrix-core==0.1.0rc5",
+  "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+rdkit = ["rdkit>=2024.3"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

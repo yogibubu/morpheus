@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matrix-chem"
+version = "0.1.0rc5"
+description = "ORACLE topology, symmetry and synthon perception primitives for MATRIX"
+requires-python = ">=3.11"
+dependencies = ["matrix-core==0.1.0rc5", "numpy>=1.24"]
+
+[project.optional-dependencies]
+smiles = ["matrix-link[rdkit]==0.1.0rc5"]
+formats = [
+  "matrix-link==0.1.0rc5",
+  "matrix-gaussian==0.1.0rc5",
+  "matrix-molpro==0.1.0rc5",
+  "matrix-mrcc==0.1.0rc5",
+  "matrix-orca==0.1.0rc5",
+  "matrix-xtb==0.1.0rc5",
+  "matrix-pyscf==0.1.0rc5",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

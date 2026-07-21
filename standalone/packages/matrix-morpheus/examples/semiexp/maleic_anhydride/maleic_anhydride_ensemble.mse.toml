@@ -1,0 +1,14 @@
+schema = "oracle.semiexp.job.v1"
+title = "maleic anhydride ensemble SE block"
+
+[files]
+geometry = "parent.xyz"
+observations = "isotopologues.toml"
+
+[fit]
+backend = "python"
+observable = "moments"
+coordinate_model = "gic"
+rotational_components = "AC"
+robust_loss = "none"
+max_iter = 120

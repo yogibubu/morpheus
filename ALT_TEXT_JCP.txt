@@ -2,21 +2,23 @@ MORPHEUS — ALT TEXT FOR THE MAIN MANUSCRIPT
 
 Figure 1. Flow diagram separating chemical and spectroscopic input, redundant primitive coordinates, SONIC or symmetry-Cartesian active spaces, model-advisor constraints, least-squares refinement, and the final semiexperimental Cartesian structure with uncertainties.
 
-Figure 2. Ball-and-stick or skeletal structures of the validation set, including acyclic, cyclic, aromatic, planar, fused, bridged, glycine, anhydride, camphor, and norbornane-derived systems used to exercise different model-construction decisions.
+Figure 2. Three-row visual ledger showing representative stretch, bend, and protected ring-puckering SONIC variables on camphor. Each row connects a human-readable primitive expansion and units to an enlarged Cartesian displacement fingerprint and to its possible MORPHEUS role as symmetry-allowed, linked, constrained, or rank-protected.
 
-Figure 3. Two-panel audit of model construction. Bar charts compare generated coordinates, symmetry-active coordinates, retained variables, and generated constraints across benchmarks; a workflow arrow contrasts manual molecule-specific formulation with topology- and symmetry-derived algorithmic models.
+Figure 3. Ball-and-stick or skeletal structures of the validation set, including acyclic, cyclic, aromatic, planar, fused, bridged, glycine, anhydride, camphor, and norbornane-derived systems used to exercise different model-construction decisions.
 
-Figure 4. Paired bar charts for nitrobenzene and azulene comparing candidate planar moment-component pairs. Selected pairs retain numerical rank and low residuals, while omitted components remain external diagnostics rather than hidden fit observables.
+Figure 4. Two-panel audit of model construction. Bar charts compare generated coordinates, symmetry-active coordinates, retained variables, and generated constraints across benchmarks; a workflow arrow contrasts manual molecule-specific formulation with topology- and symmetry-derived algorithmic models.
 
-Figure 5. Nitrobenzene Kraitchman diagnostic. Upper bars compare absolute substitution and fitted principal-axis coordinates for isotopic sites; lower bars show their signed differences, highlighting both agreement and near-axis limitations.
+Figure 5. Paired bar charts for nitrobenzene and azulene comparing candidate planar moment-component pairs. Selected pairs retain numerical rank and low residuals, while omitted components remain external diagnostics rather than hidden fit observables.
 
-Figure 6. Four-panel glycine I comparison. Upper panels report fitted bond lengths and valence angles; lower panels show semiexperimental minus quantum-chemical shifts, revealing small, chemically localized structural corrections.
+Figure 6. Nitrobenzene Kraitchman diagnostic. Upper bars compare absolute substitution and fitted principal-axis coordinates for isotopic sites; lower bars show their signed differences, highlighting both agreement and near-axis limitations.
 
-Figure 7. Camphor validation. Density plots summarize bond-length and valence-angle shifts from the accepted reference, while a logarithmic scatter plot separates stable model variants from misleading fits with large structural distortion.
+Figure 7. Four-panel glycine I comparison. Upper panels report fitted bond lengths and valence angles; lower panels show semiexperimental minus quantum-chemical shifts, revealing small, chemically localized structural corrections.
 
-Figure 8. End-to-end glycine workflow from quantum-chemical geometry, vibrational corrections, isotopologue data, and molecular perception through SONIC generation, advisor constraints, MORPHEUS least squares, and the final semiexperimental structure with diagnostics.
+Figure 8. Camphor validation. Density plots summarize bond-length and valence-angle shifts from the accepted reference, while a logarithmic scatter plot separates stable model variants from misleading fits with large structural distortion.
 
-Figure 9. Three-dimensional ball-and-stick rendering of testosterone, emphasizing the size and fused-ring topology of the 49-atom large-molecule demonstration used to test automated coordinate and refinement-model construction.
+Figure 9. End-to-end glycine workflow from quantum-chemical geometry, vibrational corrections, isotopologue data, and molecular perception through SONIC generation, advisor constraints, MORPHEUS least squares, and the final semiexperimental structure with diagnostics.
+
+Figure 10. Three-dimensional ball-and-stick rendering of testosterone, emphasizing the size and fused-ring topology of the 49-atom large-molecule demonstration used to test automated coordinate and refinement-model construction.
 
 Table I. Operational comparison of Z-matrix, user-defined GIC, and MORPHEUS workflows, showing differences in input model, active variables, ring and bridge treatment, missing-isotope handling, symmetry, output audit, and reproducibility.
 

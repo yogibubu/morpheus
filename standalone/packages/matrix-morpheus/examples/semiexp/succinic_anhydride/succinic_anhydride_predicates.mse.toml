@@ -1,0 +1,101 @@
+schema = "oracle.semiexp.job.v1"
+title = "succinic anhydride SE fit with hydrogen predicates"
+
+[files]
+observations = "isotopologues.toml"
+
+[fit]
+backend = "python"
+observable = "moments"
+coordinate_model = "gic"
+rotational_components = "AC"
+robust_loss = "none"
+max_iter = 120
+
+[geometry]
+units = "angstrom"
+atoms = [
+  ["O",  0.0000000000,  2.2424033610,  0.0000000000],
+  ["C",  1.1401385711,  1.4622874625,  0.0000000000],
+  ["C",  0.7560776136,  0.0000000000,  0.0000000000],
+  ["C", -0.7560776136,  0.0000000000,  0.0000000000],
+  ["C", -1.1401385711,  1.4622874625,  0.0000000000],
+  ["O",  2.2248557600,  1.9462889200,  0.0000000000],
+  ["O", -2.2248557600,  1.9462889200,  0.0000000000],
+  ["H",  1.1968682071, -0.4703773924, -0.8789475305],
+  ["H",  1.1968682071, -0.4703773924,  0.8789475305],
+  ["H", -1.1968682071, -0.4703773924, -0.8789475305],
+  ["H", -1.1968682071, -0.4703773924,  0.8789475305],
+]
+
+[[qm_predicates]]
+pattern = "R(3,8)"
+value = 1.0872
+sigma = 0.002
+source = "Jahn2020SuccinicAnhydride Table 5 three-predicate fit"
+
+[[qm_predicates]]
+pattern = "R(3,9)"
+value = 1.0872
+sigma = 0.002
+source = "Jahn2020SuccinicAnhydride Table 5 three-predicate fit"
+
+[[qm_predicates]]
+pattern = "R(4,10)"
+value = 1.0872
+sigma = 0.002
+source = "Jahn2020SuccinicAnhydride Table 5 three-predicate fit"
+
+[[qm_predicates]]
+pattern = "R(4,11)"
+value = 1.0872
+sigma = 0.002
+source = "Jahn2020SuccinicAnhydride Table 5 three-predicate fit"
+
+[[qm_predicates]]
+pattern = "A(2,3,8)"
+value = 108.32
+sigma = 0.3
+source = "Jahn2020SuccinicAnhydride Table 5 three-predicate fit"
+
+[[qm_predicates]]
+pattern = "A(2,3,9)"
+value = 108.32
+sigma = 0.3
+source = "Jahn2020SuccinicAnhydride Table 5 three-predicate fit"
+
+[[qm_predicates]]
+pattern = "A(5,4,10)"
+value = 108.32
+sigma = 0.3
+source = "Jahn2020SuccinicAnhydride Table 5 three-predicate fit"
+
+[[qm_predicates]]
+pattern = "A(5,4,11)"
+value = 108.32
+sigma = 0.3
+source = "Jahn2020SuccinicAnhydride Table 5 three-predicate fit"
+
+[[qm_predicates]]
+pattern = "D(1,2,3,8)"
+value = -121.73
+sigma = 0.3
+source = "Jahn2020SuccinicAnhydride Table 5 three-predicate fit"
+
+[[qm_predicates]]
+pattern = "D(1,2,3,9)"
+value = 121.73
+sigma = 0.3
+source = "Jahn2020SuccinicAnhydride Table 5 three-predicate fit"
+
+[[qm_predicates]]
+pattern = "D(1,5,4,10)"
+value = 121.73
+sigma = 0.3
+source = "Jahn2020SuccinicAnhydride Table 5 three-predicate fit"
+
+[[qm_predicates]]
+pattern = "D(1,5,4,11)"
+value = -121.73
+sigma = 0.3
+source = "Jahn2020SuccinicAnhydride Table 5 three-predicate fit"

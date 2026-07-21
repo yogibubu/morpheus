@@ -20,3 +20,10 @@
 tmp/
 tmp_render/
 output/
+
+# Python package build products
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.py[cod]

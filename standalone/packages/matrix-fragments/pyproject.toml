@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matrix-fragments"
+version = "0.1.0rc5"
+description = "Topology-backed fragment workflows for MATRIX"
+requires-python = ">=3.11"
+dependencies = [
+  "matrix-core==0.1.0rc5",
+  "matrix-chem==0.1.0rc5",
+  "numpy>=1.24",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

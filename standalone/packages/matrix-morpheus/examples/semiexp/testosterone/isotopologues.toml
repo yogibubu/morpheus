@@ -1,0 +1,13 @@
+[[isotopologues]]
+label = "T1-H2--gp parent"
+substitutions = ""
+[isotopologues.constants]
+A_MHz = 801.500000
+B_MHz = 171.900000
+C_MHz = 156.600000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 8.100000
+delta_B_MHz = 1.600000
+delta_C_MHz = 1.400000
+source = "Uribe et al. J. Phys. Chem. A 2024 Table 4, B3 vibrational corrections"
+convention = "subtract"

@@ -1,0 +1,76 @@
+9
+maleic anhydride rse start reconstructed from Vogt Demaison Rudolph Struct Chem 2011 Table 1
+O       0.00000000      0.00000000      0.00000000
+C       1.12400884     -0.80887277      0.00000000
+C       0.66620000     -2.22143749      0.00000000
+C      -0.66620000     -2.22143749      0.00000000
+C      -1.12400884     -0.80887277      0.00000000
+O       2.22904235     -0.36890311      0.00000000
+O      -2.22904235     -0.36890311      0.00000000
+H       1.35672053     -3.04729077      0.00000000
+H      -1.35672053     -3.04729077      0.00000000
+
+#ISOTOPOLOGUES
+SCHEMA oracle.xyz.isotopologues.v1
+UNITS ROTATIONAL=MHz DELTAVIB=MHz DELTAEL=MHz SIGMA=MHz
+INDEXING ATOMS=ONE_BASED
+BEGIN Main
+DEFINITION parent
+ROTATIONAL_MHZ A=6842.489 B=2467.614 C=1813.628
+DELTAVIB_MHZ A=49.78 B=14.18 C=11.16 SOURCE='Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction' CONVENTION=add
+DELTAEL_MHZ A=0.421 B=0.066 C=0.012 SOURCE='inferred from Table 5 Be - B0 - rovibrational correction' CONVENTION=add
+END
+BEGIN d2
+DEFINITION 8:2;9:2
+ROTATIONAL_MHZ A=6106.159 B=2423.551 C=1734.998
+DELTAVIB_MHZ A=41.51 B=13.89 C=10.46 SOURCE='Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction' CONVENTION=add
+DELTAEL_MHZ A=0.331 B=0.069 C=0.022 SOURCE='inferred from Table 5 Be - B0 - rovibrational correction' CONVENTION=add
+END
+BEGIN 13C2
+DEFINITION 2:13
+ROTATIONAL_MHZ A=6841.501 B=2452.607 C=1805.442
+DELTAVIB_MHZ A=41.51 B=13.89 C=10.46 SOURCE='Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction' CONVENTION=add
+DELTAEL_MHZ A=8.419 B=0.153 C=0.578 SOURCE='inferred from Table 5 Be - B0 - rovibrational correction' CONVENTION=add
+END
+BEGIN 13C3
+DEFINITION 3:13
+ROTATIONAL_MHZ A=6691.282 B=2462.24 C=1799.954
+DELTAVIB_MHZ A=48.19 B=14.11 C=11.03 SOURCE='Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction' CONVENTION=add
+DELTAEL_MHZ A=0.398 B=0.07 C=0.016 SOURCE='inferred from Table 5 Be - B0 - rovibrational correction' CONVENTION=add
+END
+BEGIN 18O1
+DEFINITION 1:18
+ROTATIONAL_MHZ A=6688.643 B=2467.808 C=1802.755
+DELTAVIB_MHZ A=49.17 B=13.97 C=11.01 SOURCE='Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction' CONVENTION=add
+DELTAEL_MHZ A=0.407 B=0.072 C=0.015 SOURCE='inferred from Table 5 Be - B0 - rovibrational correction' CONVENTION=add
+END
+BEGIN 18O6
+DEFINITION 6:18
+ROTATIONAL_MHZ A=6790.337 B=2354.397 C=1748.276
+DELTAVIB_MHZ A=49.12 B=13.41 C=10.65 SOURCE='Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction' CONVENTION=add
+DELTAEL_MHZ A=0.423 B=0.063 C=0.014 SOURCE='inferred from Table 5 Be - B0 - rovibrational correction' CONVENTION=add
+END
+BEGIN 13C2d2
+DEFINITION 2:13;8:2;9:2
+ROTATIONAL_MHZ A=6104.567 B=2409.078 C=1727.44
+DELTAVIB_MHZ A=41.4 B=13.67 C=10.34 SOURCE='Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction' CONVENTION=add
+DELTAEL_MHZ A=0.343 B=0.062 C=0.01 SOURCE='inferred from Table 5 Be - B0 - rovibrational correction' CONVENTION=add
+END
+BEGIN 13C3d2
+DEFINITION 3:13;8:2;9:2
+ROTATIONAL_MHZ A=5993.203 B=2418.373 C=1723.126
+DELTAVIB_MHZ A=40.31 B=13.83 C=10.35 SOURCE='Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction' CONVENTION=add
+DELTAEL_MHZ A=0.327 B=0.067 C=0.014 SOURCE='inferred from Table 5 Be - B0 - rovibrational correction' CONVENTION=add
+END
+BEGIN 18O1d2
+DEFINITION 1:18;8:2;9:2
+ROTATIONAL_MHZ A=5971.996 B=2423.742 C=1724.104
+DELTAVIB_MHZ A=41.02 B=13.71 C=10.34 SOURCE='Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction' CONVENTION=add
+DELTAEL_MHZ A=0.314 B=0.068 C=0.006 SOURCE='inferred from Table 5 Be - B0 - rovibrational correction' CONVENTION=add
+END
+BEGIN 18O6d2
+DEFINITION 6:18;8:2;9:2
+ROTATIONAL_MHZ A=6058.195 B=2314.121 C=1674.54
+DELTAVIB_MHZ A=41.05 B=13.17 C=10.03 SOURCE='Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction' CONVENTION=add
+DELTAEL_MHZ A=0.335 B=0.059 C=0.01 SOURCE='inferred from Table 5 Be - B0 - rovibrational correction' CONVENTION=add
+END

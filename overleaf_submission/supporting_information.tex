@@ -7,6 +7,7 @@
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{listings}
+\usepackage{placeins}
 
 \hypersetup{hidelinks}
 
@@ -33,7 +34,12 @@ Algorithmic Construction and Exploitation of Topology-Constrained Refinement Mod
 
 Tables~\ref{tab:benchmark-summary} and~\ref{tab:planar-pair-diagnostics}
 collect the numerical values underlying the graphical benchmark summaries in
-the main text.
+the main text. A complete representative command, Cartesian and isotopologue
+input, output manifest, and final diagnostic excerpt are given in
+Section~\ref{sec:si-input-output}. The standalone source, runnable examples,
+benchmark inputs, and machine-readable validation data are publicly available
+in the revision-pinned MORPHEUS repository at
+\url{https://github.com/yogibubu/morpheus}.
 
 \input{generated/benchmark_summary.tex}
 
@@ -376,8 +382,8 @@ OD\_ND2 & C & 2806.0910 & 2806.1569 & -0.0659 \\
 Table~\ref{tab:si-cyclopentadiene-rotconstants} reports the complete
 comparison between corrected experimental rotational constants and constants
 calculated from the final semiexperimental structure. The workflow uses
-generalized internal coordinates (GICs) supplied by SMITH from the ORACLE
-primitive/B source, or symmetry-adapted Cartesian coordinates consumed by
+generalized internal coordinates (GICs) supplied by the companion SONIC
+construction from the perceived primitive/B source, or symmetry-adapted Cartesian coordinates consumed by
 \texttt{MORPHEUS}. The data set contains 14
 isotopologues and all three principal rotational constants for each
 isotopologue. The MORPHEUS refinement uses only a Cartesian representation of the
@@ -654,7 +660,7 @@ refinement step.
 
 \begin{table}
 \caption{Summary of the anhydride literature-data tests. ``GICs'' is the
-number of final non-redundant coordinates supplied to MORPHEUS by SMITH,
+number of final non-redundant SONIC coordinates supplied to MORPHEUS,
 ``Act.'' is
 the number of active totally symmetric coordinates before projection of hard
 constraints, and ``Eff.'' is the final rank/effective number of fitted
@@ -716,13 +722,14 @@ included by using the tabulated $B_e$ values, equivalently as
 $\Delta B_\mathrm{el}=B_e-B_0-\Delta B_\mathrm{vib}$. No Z-matrix, manual
 coordinate model, constraints, predicates, or parameter classes were used.
 
-\subsection{Input and Manifest Excerpt}
+\subsection{Representative Input and Output}
+\label{sec:si-input-output}
 
 The complete example distributed with the code consists only of the parent
 Cartesian geometry and the isotopologue records. The command used for the
 calculation was
 \begin{lstlisting}
-python -m matrix semiexp \
+morpheus semiexp \
   --xyz examples/semiexp/maleic_anhydride/parent.xyz \
   --observations examples/semiexp/maleic_anhydride/isotopologues.toml \
   --outdir working/semiexp/maleic_anhydride \
@@ -827,6 +834,13 @@ index active class value sigma label
 21 no - 6.53687463342e-16 0 GIC021 MORPHEUS B2Ang0003 irrep=B2
 \end{lstlisting}
 
+The complete files corresponding to these excerpts are distributed in the
+public repository's maleic-anhydride example directory.
+The public release also includes the executable source snapshot, all required
+internal packages, legacy benchmark inputs, and the machine-readable camphor
+validation archive used for the main-text stress test.
+
+\FloatBarrier
 \begin{table}
 \caption{Maleic anhydride refinement diagnostics. The GIC fit used moments of
 inertia for the independent $AB$ planar pair; the omitted $C$ constants are
@@ -967,7 +981,7 @@ with a default uncertainty of 0.005~\AA{}. A second sensitivity run used
 geometry: 0.005--0.01~\AA{} is already a conservative range for good
 equilibrium XY bonds, whereas 0.05~\AA{} would be too loose to represent a
 chemically meaningful bond-length predicate. The predicate uncertainty is
-exposed as \texttt{MATRIX\_TESTOSTERONE\_XY\_PREDICATE\_SIGMA}, because it
+exposed as \texttt{MORPHEUS\_TESTOSTERONE\_XY\_PREDICATE\_SIGMA}, because it
 controls the tradeoff between the parent rotational data and the QC reference
 geometry.
 
@@ -1065,9 +1079,9 @@ testosterone example directory. They can be run from the repository root and
 read the QC Cartesian geometry, the published parent rotational constants, and
 the published vibrational corrections:
 \begin{lstlisting}
-sh packages/matrix-morpheus/examples/semiexp/testosterone/run_testosterone_cc_class.sh
-sh packages/matrix-morpheus/examples/semiexp/testosterone/run_testosterone_cc_co_classes.sh
-sh packages/matrix-morpheus/examples/semiexp/testosterone/run_testosterone_predicates.sh
+sh examples/semiexp/testosterone/run_testosterone_cc_class.sh
+sh examples/semiexp/testosterone/run_testosterone_cc_co_classes.sh
+sh examples/semiexp/testosterone/run_testosterone_predicates.sh
 \end{lstlisting}
 
 \section{Characteristics of the Test Cases}
