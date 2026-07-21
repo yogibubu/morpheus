@@ -1,0 +1,69 @@
+[[isotopologues]]
+label = "Parent"
+substitutions = ""
+[isotopologues.constants]
+A_MHz = 5932.643730
+B_MHz = 2363.272417
+C_MHz = 1728.290590
+[isotopologues.vibrational_correction]
+delta_A_MHz = 41.671270
+delta_B_MHz = 14.711583
+delta_C_MHz = 9.067410
+source = "Jahn et al. PCCP 2020 Table S3 Be minus Table 1 B0"
+convention = "add"
+
+[[isotopologues]]
+label = "13CH"
+substitutions = "3:13"
+[isotopologues.constants]
+A_MHz = 5815.680270
+B_MHz = 2356.839147
+C_MHz = 1714.846042
+[isotopologues.vibrational_correction]
+delta_A_MHz = 40.338730
+delta_B_MHz = 14.653853
+delta_C_MHz = 8.943958
+source = "Jahn et al. PCCP 2020 Table S3 Be minus Table 1 B0"
+convention = "add"
+
+[[isotopologues]]
+label = "13CO"
+substitutions = "2:13"
+[isotopologues.constants]
+A_MHz = 5931.400870
+B_MHz = 2349.061863
+C_MHz = 1720.573515
+[isotopologues.vibrational_correction]
+delta_A_MHz = 41.267130
+delta_B_MHz = 14.551137
+delta_C_MHz = 8.961485
+source = "Jahn et al. PCCP 2020 Table S3 Be minus Table 1 B0"
+convention = "add"
+
+[[isotopologues]]
+label = "18OCO"
+substitutions = "6:18"
+[isotopologues.constants]
+A_MHz = 5881.707090
+B_MHz = 2259.368350
+C_MHz = 1667.987119
+[isotopologues.vibrational_correction]
+delta_A_MHz = 41.053910
+delta_B_MHz = 13.946650
+delta_C_MHz = 8.729881
+source = "Jahn et al. PCCP 2020 Table S3 Be minus Table 1 B0"
+convention = "add"
+
+[[isotopologues]]
+label = "18OCOC"
+substitutions = "1:18"
+[isotopologues.constants]
+A_MHz = 5816.022160
+B_MHz = 2363.407370
+C_MHz = 1718.361497
+[isotopologues.vibrational_correction]
+delta_A_MHz = 40.890840
+delta_B_MHz = 14.551630
+delta_C_MHz = 8.930503
+source = "Jahn et al. PCCP 2020 Table S3 Be minus Table 1 B0"
+convention = "add"

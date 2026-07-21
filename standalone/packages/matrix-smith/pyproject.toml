@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matrix-smith"
+version = "0.1.0rc5"
+description = "SMITH/SONIC coordinate construction for MATRIX"
+requires-python = ">=3.11"
+dependencies = [
+  "matrix-core==0.1.0rc5",
+  "matrix-chem==0.1.0rc5",
+  "matrix-fragments==0.1.0rc5",
+  "matrix-gaussian==0.1.0rc5",
+  "matrix-engines==0.1.0rc5",
+  "matrix-qm==0.1.0rc5",
+  "numpy>=1.24",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+matrix_smith = ["survibfit/*.json", "schemas/*.json"]

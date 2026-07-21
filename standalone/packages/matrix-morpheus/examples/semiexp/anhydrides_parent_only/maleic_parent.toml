@@ -1,0 +1,19 @@
+[[isotopologues]]
+label = "Main"
+substitutions = ""
+[isotopologues.constants]
+A_MHz = 6842.489000
+B_MHz = 2467.614000
+C_MHz = 1813.628000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 49.780000
+delta_B_MHz = 14.180000
+delta_C_MHz = 11.160000
+source = "Vogt-Demaison-Rudolph Struct Chem 2011 Table 5 MP2/cc-pVTZ rovibrational correction"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.421000
+delta_B_MHz = 0.066000
+delta_C_MHz = 0.012000
+source = "inferred from Table 5 Be - B0 - rovibrational correction"
+convention = "add"

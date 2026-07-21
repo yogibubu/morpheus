@@ -1,0 +1,38 @@
+[[isotopologues]]
+label = "parent"
+substitutions = ""
+[isotopologues.constants]
+A_MHz = 17758.018820519
+B_MHz = 17758.018820519
+C_MHz = 8879.009410259
+[isotopologues.vibrational_correction]
+delta_A_MHz = 0.0
+delta_B_MHz = 0.0
+delta_C_MHz = 0.0
+source = "example"
+
+[[isotopologues]]
+label = "13C1"
+substitutions = "1:13"
+[isotopologues.constants]
+A_MHz = 17758.018820519
+B_MHz = 17059.427501989
+C_MHz = 8700.857375969
+[isotopologues.vibrational_correction]
+delta_A_MHz = 0.0
+delta_B_MHz = 0.0
+delta_C_MHz = 0.0
+source = "example"
+
+[[isotopologues]]
+label = "13C2"
+substitutions = "2:13"
+[isotopologues.constants]
+A_MHz = 17758.018820519
+B_MHz = 17059.427501989
+C_MHz = 8700.857375969
+[isotopologues.vibrational_correction]
+delta_A_MHz = 0.0
+delta_B_MHz = 0.0
+delta_C_MHz = 0.0
+source = "example"

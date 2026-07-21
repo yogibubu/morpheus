@@ -12,4 +12,4 @@ graphical_toc.pdf and figures/graphical_toc.png provide the text-free graphical 
 
 Note for submission:
   The coordinate definitions used by MORPHEUS are SMITH-generated SONIC contracts. Any internal-to-Cartesian realization is delegated to LINK; MORPHEUS does not own a separate Wilson-B inversion.
-  The companion SMITH/SONIC methodological manuscript is available as a preprint and can be uploaded as confidential supplementary material for referees if the journal requests it.
+  The companion SMITH/SONIC methodological manuscript is available as arXiv:2607.16550. The standalone MORPHEUS source and reproducibility data are public at https://github.com/yogibubu/morpheus.

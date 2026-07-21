@@ -1,0 +1,19 @@
+[[isotopologues]]
+label = "Parent"
+substitutions = ""
+[isotopologues.constants]
+A_MHz = 1801.762200
+B_MHz = 1191.718200
+C_MHz = 717.446100
+[isotopologues.vibrational_correction]
+delta_A_MHz = 12.971904
+delta_B_MHz = 7.564095
+delta_C_MHz = 4.658892
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 B2PLYP/VTZ rovibrational correction scaled by 1.11"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.051300
+delta_B_MHz = 0.021200
+delta_C_MHz = -0.003000
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 electronic correction"
+convention = "add"

@@ -1,0 +1,14 @@
+schema = "oracle.semiexp.job.v1"
+title = "maleic anhydride parent-only ensemble block"
+
+[files]
+geometry = "../maleic_anhydride/parent.xyz"
+observations = "maleic_parent.toml"
+
+[fit]
+backend = "python"
+observable = "moments"
+coordinate_model = "gic"
+rotational_components = "AC"
+robust_loss = "none"
+max_iter = 120

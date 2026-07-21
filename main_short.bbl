@@ -6,7 +6,7 @@
 %Control: page (0) single
 %Control: year (1) truncated
 %Control: production of eprint (0) enabled
-\begin{thebibliography}{35}%
+\begin{thebibliography}{37}%
 \makeatletter
 \providecommand \@ifxundefined [1]{%
  \@ifx{#1\undefined}
@@ -281,6 +281,14 @@
   {journal} {\bibinfo  {journal} {J. Chem. Theory Comput.}\ }\textbf {\bibinfo
   {volume} {21}},\ \bibinfo {pages} {10930} (\bibinfo {year}
   {2025})}\BibitemShut {NoStop}%
+\bibitem [{\citenamefont {Barone}(2026{\natexlab{a}})}]{Barone2026SONIC}%
+  \BibitemOpen
+  \bibfield  {author} {\bibinfo {author} {\bibfnamefont {V.}~\bibnamefont
+  {Barone}},\ }\href {https://doi.org/10.48550/arXiv.2607.16550} {\enquote
+  {\bibinfo {title} {{SONIC}: Symmetry-oriented non-redundant internal
+  coordinates},}\ } (\bibinfo {year} {2026}{\natexlab{a}}),\ \Eprint
+  {https://arxiv.org/abs/2607.16550} {arXiv:2607.16550 [physics.chem-ph]}
+  \BibitemShut {NoStop}%
 \bibitem [{\citenamefont {Golub}\ and\ \citenamefont
   {Reinsch}(1970)}]{GolubReinsch1970}%
   \BibitemOpen
@@ -511,4 +519,15 @@
   {https://doi.org/10.1021/acs.jpca.4c00573} {\bibfield  {journal} {\bibinfo
   {journal} {J. Phys. Chem. A}\ }\textbf {\bibinfo {volume} {128}},\ \bibinfo
   {pages} {2629} (\bibinfo {year} {2024})}\BibitemShut {NoStop}%
+\bibitem [{\citenamefont
+  {Barone}(2026{\natexlab{b}})}]{Barone2026MORPHEUSSoftware}%
+  \BibitemOpen
+  \bibfield  {author} {\bibinfo {author} {\bibfnamefont {V.}~\bibnamefont
+  {Barone}},\ }\href
+  {https://github.com/yogibubu/morpheus/releases/tag/v0.1.0rc6} {\enquote
+  {\bibinfo {title} {{MORPHEUS}: Standalone source, examples, and
+  reproducibility data},}\ }\bibinfo {howpublished}
+  {\url{https://github.com/yogibubu/morpheus/releases/tag/v0.1.0rc6}} (\bibinfo
+  {year} {2026}{\natexlab{b}}),\ \bibinfo {note} {revision-pinned software and
+  data release}\BibitemShut {NoStop}%
 \end{thebibliography}%

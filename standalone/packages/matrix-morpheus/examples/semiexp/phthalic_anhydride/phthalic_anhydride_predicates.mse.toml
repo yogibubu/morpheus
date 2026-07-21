@@ -1,0 +1,141 @@
+schema = "oracle.semiexp.job.v1"
+title = "phthalic anhydride SE fit with reBO predicates"
+
+[files]
+observations = "isotopologues.toml"
+
+[fit]
+backend = "python"
+observable = "moments"
+coordinate_model = "gic"
+rotational_components = "AC"
+robust_loss = "none"
+max_iter = 120
+
+[geometry]
+units = "angstrom"
+atoms = [
+  ["C", -0.6906177773,  0.4838721539, 0.0],
+  ["C",  0.6906177773,  0.4838721539, 0.0],
+  ["C",  1.1402425683,  1.8937189053, 0.0],
+  ["O",  0.0000000000,  2.6891587115, 0.0],
+  ["C", -1.1402425683,  1.8937189053, 0.0],
+  ["C",  1.4224212008, -0.6910786760, 0.0],
+  ["C",  0.6992884155, -1.8808403497, 0.0],
+  ["C", -0.6992884155, -1.8808403497, 0.0],
+  ["C", -1.4224212008, -0.6910786760, 0.0],
+  ["O",  2.2367706363,  2.3526675800, 0.0],
+  ["O", -2.2367706363,  2.3526675800, 0.0],
+  ["H",  2.5026459672, -0.6783294003, 0.0],
+  ["H",  1.2256283922, -2.8245895689, 0.0],
+  ["H", -1.2256283922, -2.8245895689, 0.0],
+  ["H", -2.5026459672, -0.6783294003, 0.0],
+]
+
+[[qm_predicates]]
+pattern = "R(1,2)"
+value = 1.3833
+sigma = 0.002
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "R(2,3)"
+value = 1.4812
+sigma = 0.002
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "R(3,4)"
+value = 1.3913
+sigma = 0.002
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "R(6,2)"
+value = 1.3856
+sigma = 0.002
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "R(7,6)"
+value = 1.3936
+sigma = 0.002
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "R(8,7)"
+value = 1.4004
+sigma = 0.002
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "R(3,10)"
+value = 1.1904
+sigma = 0.002
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "R(6,12)"
+value = 1.0801
+sigma = 0.002
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "R(7,13)"
+value = 1.0807
+sigma = 0.002
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "A(1,2,3)"
+value = 107.66
+sigma = 0.2
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "A(4,3,2)"
+value = 107.24
+sigma = 0.2
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "A(5,4,3)"
+value = 110.19
+sigma = 0.2
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "A(6,2,3)"
+value = 130.42
+sigma = 0.2
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "A(7,6,2)"
+value = 116.78
+sigma = 0.2
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "A(8,7,6)"
+value = 121.30
+sigma = 0.2
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "A(2,3,10)"
+value = 130.49
+sigma = 0.2
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "A(2,6,12)"
+value = 121.26
+sigma = 0.2
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"
+
+[[qm_predicates]]
+pattern = "A(6,7,13)"
+value = 119.59
+sigma = 0.2
+source = "Belyakov2022PhthalicAnhydride reBO Table 1"

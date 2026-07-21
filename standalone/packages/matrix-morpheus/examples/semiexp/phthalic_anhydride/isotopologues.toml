@@ -1,0 +1,139 @@
+[[isotopologues]]
+label = "Parent"
+substitutions = ""
+[isotopologues.constants]
+A_MHz = 1801.762200
+B_MHz = 1191.718200
+C_MHz = 717.446100
+[isotopologues.vibrational_correction]
+delta_A_MHz = 12.971904
+delta_B_MHz = 7.564095
+delta_C_MHz = 4.658892
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 B2PLYP/VTZ rovibrational correction scaled by 1.11"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.051300
+delta_B_MHz = 0.021200
+delta_C_MHz = -0.003000
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 electronic correction"
+convention = "add"
+
+[[isotopologues]]
+label = "13C3_C5"
+substitutions = "3:13"
+[isotopologues.constants]
+A_MHz = 1793.556000
+B_MHz = 1187.846000
+C_MHz = 714.745000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 12.840813
+delta_B_MHz = 7.506597
+delta_C_MHz = 4.619043
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 B2PLYP/VTZ rovibrational correction scaled by 1.11"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.050800
+delta_B_MHz = 0.020900
+delta_C_MHz = -0.002900
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 electronic correction"
+convention = "add"
+
+[[isotopologues]]
+label = "13C1_C2"
+substitutions = "1:13"
+[isotopologues.constants]
+A_MHz = 1798.708300
+B_MHz = 1191.614100
+C_MHz = 716.926100
+[isotopologues.vibrational_correction]
+delta_A_MHz = 12.920733
+delta_B_MHz = 7.506375
+delta_C_MHz = 4.629255
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 B2PLYP/VTZ rovibrational correction scaled by 1.11"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.051100
+delta_B_MHz = 0.021100
+delta_C_MHz = -0.002900
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 electronic correction"
+convention = "add"
+
+[[isotopologues]]
+label = "13C6_C9"
+substitutions = "6:13"
+[isotopologues.constants]
+A_MHz = 1788.986400
+B_MHz = 1186.077500
+C_MHz = 713.379800
+[isotopologues.vibrational_correction]
+delta_A_MHz = 12.868341
+delta_B_MHz = 7.492722
+delta_C_MHz = 4.617933
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 B2PLYP/VTZ rovibrational correction scaled by 1.11"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.050600
+delta_B_MHz = 0.021000
+delta_C_MHz = -0.002900
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 electronic correction"
+convention = "add"
+
+[[isotopologues]]
+label = "13C7_C8"
+substitutions = "7:13"
+[isotopologues.constants]
+A_MHz = 1798.765000
+B_MHz = 1172.900300
+C_MHz = 710.118500
+[isotopologues.vibrational_correction]
+delta_A_MHz = 12.930057
+delta_B_MHz = 7.430784
+delta_C_MHz = 4.602393
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 B2PLYP/VTZ rovibrational correction scaled by 1.11"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.051100
+delta_B_MHz = 0.020600
+delta_C_MHz = -0.002800
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 electronic correction"
+convention = "add"
+
+[[isotopologues]]
+label = "18O4"
+substitutions = "4:18"
+[isotopologues.constants]
+A_MHz = 1801.861900
+B_MHz = 1170.383000
+C_MHz = 709.678300
+[isotopologues.vibrational_correction]
+delta_A_MHz = 12.842145
+delta_B_MHz = 7.477182
+delta_C_MHz = 4.601394
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 B2PLYP/VTZ rovibrational correction scaled by 1.11"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.051300
+delta_B_MHz = 0.020300
+delta_C_MHz = -0.002900
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 electronic correction"
+convention = "add"
+
+[[isotopologues]]
+label = "18O10_O11"
+substitutions = "10:18"
+[isotopologues.constants]
+A_MHz = 1742.373400
+B_MHz = 1175.943900
+C_MHz = 702.241500
+[isotopologues.vibrational_correction]
+delta_A_MHz = 12.453312
+delta_B_MHz = 7.430673
+delta_C_MHz = 4.541454
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 B2PLYP/VTZ rovibrational correction scaled by 1.11"
+convention = "add"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.048000
+delta_B_MHz = 0.020500
+delta_C_MHz = -0.002900
+source = "Belyakov et al. Chem Phys Lett 2022 Table 2 electronic correction"
+convention = "add"

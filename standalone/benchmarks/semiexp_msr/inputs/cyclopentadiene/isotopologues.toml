@@ -1,0 +1,269 @@
+[[isotopologues]]
+label = "parent"
+substitutions = ""
+[isotopologues.constants]
+A_MHz = 8426.10900000
+B_MHz = 8225.64000000
+C_MHz = 4271.43700000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 63.04600000
+delta_B_MHz = 66.46100000
+delta_C_MHz = 34.22800000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
+
+[[isotopologues]]
+label = "iso02_113"
+substitutions = "1:13"
+[isotopologues.constants]
+A_MHz = 8426.05300000
+B_MHz = 8219.48300000
+C_MHz = 4217.75900000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 66.04600000
+delta_B_MHz = 60.79600000
+delta_C_MHz = 33.51200000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
+
+[[isotopologues]]
+label = "iso03_213"
+substitutions = "2:13"
+[isotopologues.constants]
+A_MHz = 8420.04300000
+B_MHz = 8040.42500000
+C_MHz = 4219.41100000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 62.74800000
+delta_B_MHz = 64.62700000
+delta_C_MHz = 33.67200000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
+
+[[isotopologues]]
+label = "iso04_313"
+substitutions = "3:13"
+[isotopologues.constants]
+A_MHz = 8420.04300000
+B_MHz = 8040.42500000
+C_MHz = 4219.41100000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 62.74800000
+delta_B_MHz = 64.62700000
+delta_C_MHz = 33.67200000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
+
+[[isotopologues]]
+label = "iso05_413"
+substitutions = "4:13"
+[isotopologues.constants]
+A_MHz = 8345.13200000
+B_MHz = 8108.71400000
+C_MHz = 4219.06300000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 63.24900000
+delta_B_MHz = 63.84400000
+delta_C_MHz = 33.58000000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
+
+[[isotopologues]]
+label = "iso06_513"
+substitutions = "5:13"
+[isotopologues.constants]
+A_MHz = 8345.13200000
+B_MHz = 8108.71400000
+C_MHz = 4219.06300000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 63.24900000
+delta_B_MHz = 63.84400000
+delta_C_MHz = 33.58000000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
+
+[[isotopologues]]
+label = "iso07_102"
+substitutions = "10:2"
+[isotopologues.constants]
+A_MHz = 8129.95200000
+B_MHz = 7859.53400000
+C_MHz = 4145.09000000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 65.66000000
+delta_B_MHz = 58.86400000
+delta_C_MHz = 33.26300000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
+
+[[isotopologues]]
+label = "iso08_112"
+substitutions = "11:2"
+[isotopologues.constants]
+A_MHz = 8129.95200000
+B_MHz = 7859.53400000
+C_MHz = 4145.09000000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 65.66000000
+delta_B_MHz = 58.86400000
+delta_C_MHz = 33.26300000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
+
+[[isotopologues]]
+label = "iso09_62"
+substitutions = "6:2"
+[isotopologues.constants]
+A_MHz = 8414.04500000
+B_MHz = 7591.88900000
+C_MHz = 4091.15400000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 63.13000000
+delta_B_MHz = 58.62800000
+delta_C_MHz = 32.01800000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
+
+[[isotopologues]]
+label = "iso10_72"
+substitutions = "7:2"
+[isotopologues.constants]
+A_MHz = 8414.04500000
+B_MHz = 7591.88900000
+C_MHz = 4091.15400000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 63.13000000
+delta_B_MHz = 58.62800000
+delta_C_MHz = 32.01800000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
+
+[[isotopologues]]
+label = "iso11_82"
+substitutions = "8:2"
+[isotopologues.constants]
+A_MHz = 8307.03600000
+B_MHz = 7678.12600000
+C_MHz = 4090.25400000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 64.79300000
+delta_B_MHz = 56.98200000
+delta_C_MHz = 32.01800000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
+
+[[isotopologues]]
+label = "iso12_92"
+substitutions = "9:2"
+[isotopologues.constants]
+A_MHz = 8307.03600000
+B_MHz = 7678.12600000
+C_MHz = 4090.25400000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 64.79300000
+delta_B_MHz = 56.98200000
+delta_C_MHz = 32.01800000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
+
+[[isotopologues]]
+label = "iso13_62_72_82_92_102"
+substitutions = "6:2;7:2;8:2;9:2;10:2"
+[isotopologues.constants]
+A_MHz = 7007.85800000
+B_MHz = 6681.88800000
+C_MHz = 3529.30200000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 49.69000000
+delta_B_MHz = 48.47500000
+delta_C_MHz = 25.95400000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
+
+[[isotopologues]]
+label = "iso14_62_72_82_92_112"
+substitutions = "6:2;7:2;8:2;9:2;11:2"
+[isotopologues.constants]
+A_MHz = 7007.85800000
+B_MHz = 6681.88800000
+C_MHz = 3529.30200000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 49.69000000
+delta_B_MHz = 48.47500000
+delta_C_MHz = 25.95400000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
+
+[[isotopologues]]
+label = "iso15_62_72_82_92_102_112"
+substitutions = "6:2;7:2;8:2;9:2;10:2;11:2"
+[isotopologues.constants]
+A_MHz = 6608.39800000
+B_MHz = 6607.34000000
+C_MHz = 3444.12900000
+[isotopologues.vibrational_correction]
+delta_A_MHz = 48.55200000
+delta_B_MHz = 46.42500000
+delta_C_MHz = 25.15800000
+source = "MSR DBvib"
+[isotopologues.electronic_correction]
+delta_A_MHz = 0.00000000
+delta_B_MHz = 0.00000000
+delta_C_MHz = 0.00000000
+source = "MSR DBEle"
