@@ -18,38 +18,244 @@ from matrix_core import read_sectioned_lines, replace_section, section_content
 
 CM5_ALPHA_INV_ANGSTROM = 2.4740
 CM5_COVALENT_RADII_ANGSTROM = (
-    0.3200, 0.3700, 1.3000, 0.9900, 0.8400, 0.7500, 0.7100, 0.6400,
-    0.6000, 0.6200, 1.6000, 1.4000, 1.2400, 1.1400, 1.0900, 1.0400,
-    1.0000, 1.0100, 2.0000, 1.7400, 1.5900, 1.4800, 1.4400, 1.3000,
-    1.2900, 1.2400, 1.1800, 1.1700, 1.2200, 1.2000, 1.2300, 1.2000,
-    1.2000, 1.1800, 1.1700, 1.1600, 2.1500, 1.9000, 1.7600, 1.6400,
-    1.5600, 1.4600, 1.3800, 1.3600, 1.3400, 1.3000, 1.3600, 1.4000,
-    1.4200, 1.4000, 1.4000, 1.3700, 1.3600, 1.3600, 2.3800, 2.0600,
-    1.9400, 1.8400, 1.9000, 1.8800, 1.8600, 1.8500, 1.8300, 1.8200,
-    1.8100, 1.8000, 1.7900, 1.7700, 1.7700, 1.7800, 1.7400, 1.6400,
-    1.5800, 1.5000, 1.4100, 1.3600, 1.3200, 1.3000, 1.3000, 1.3200,
-    1.4400, 1.4500, 1.5000, 1.4200, 1.4800, 1.4600, 2.4200, 2.1100,
-    2.0100, 1.9000, 1.8400, 1.8300, 1.8000, 1.8000, 1.7300, 1.6800,
-    1.6800, 1.6800, 1.6500, 1.6700, 1.7300, 1.7600, 1.6100, 1.5700,
-    1.4900, 1.4300, 1.4100, 1.3400, 1.2900, 1.2800, 1.2100, 1.2200,
-    1.3600, 1.4300, 1.6200, 1.7500, 1.6500, 1.5700,
+    0.3200,
+    0.3700,
+    1.3000,
+    0.9900,
+    0.8400,
+    0.7500,
+    0.7100,
+    0.6400,
+    0.6000,
+    0.6200,
+    1.6000,
+    1.4000,
+    1.2400,
+    1.1400,
+    1.0900,
+    1.0400,
+    1.0000,
+    1.0100,
+    2.0000,
+    1.7400,
+    1.5900,
+    1.4800,
+    1.4400,
+    1.3000,
+    1.2900,
+    1.2400,
+    1.1800,
+    1.1700,
+    1.2200,
+    1.2000,
+    1.2300,
+    1.2000,
+    1.2000,
+    1.1800,
+    1.1700,
+    1.1600,
+    2.1500,
+    1.9000,
+    1.7600,
+    1.6400,
+    1.5600,
+    1.4600,
+    1.3800,
+    1.3600,
+    1.3400,
+    1.3000,
+    1.3600,
+    1.4000,
+    1.4200,
+    1.4000,
+    1.4000,
+    1.3700,
+    1.3600,
+    1.3600,
+    2.3800,
+    2.0600,
+    1.9400,
+    1.8400,
+    1.9000,
+    1.8800,
+    1.8600,
+    1.8500,
+    1.8300,
+    1.8200,
+    1.8100,
+    1.8000,
+    1.7900,
+    1.7700,
+    1.7700,
+    1.7800,
+    1.7400,
+    1.6400,
+    1.5800,
+    1.5000,
+    1.4100,
+    1.3600,
+    1.3200,
+    1.3000,
+    1.3000,
+    1.3200,
+    1.4400,
+    1.4500,
+    1.5000,
+    1.4200,
+    1.4800,
+    1.4600,
+    2.4200,
+    2.1100,
+    2.0100,
+    1.9000,
+    1.8400,
+    1.8300,
+    1.8000,
+    1.8000,
+    1.7300,
+    1.6800,
+    1.6800,
+    1.6800,
+    1.6500,
+    1.6700,
+    1.7300,
+    1.7600,
+    1.6100,
+    1.5700,
+    1.4900,
+    1.4300,
+    1.4100,
+    1.3400,
+    1.2900,
+    1.2800,
+    1.2100,
+    1.2200,
+    1.3600,
+    1.4300,
+    1.6200,
+    1.7500,
+    1.6500,
+    1.5700,
 )
 CM5_ATOMIC_D = (
-    0.0056, -0.1543, 0.0000, 0.0333, -0.1030, -0.0446, -0.1072, -0.0802,
-    -0.0629, -0.1088, 0.0184, 0.0000, -0.0726, -0.0790, -0.0756, -0.0565,
-    -0.0444, -0.0767, 0.0130, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
-    0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, -0.0512, -0.0557,
-    -0.0533, -0.0399, -0.0313, -0.0541, 0.0092, 0.0000, 0.0000, 0.0000,
-    0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
-    -0.0361, -0.0393, -0.0376, -0.0281, -0.0220, -0.0381, 0.0065, 0.0000,
-    0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
-    0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
-    0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
-    -0.0255, -0.0277, -0.0265, -0.0198, -0.0155, -0.0269, 0.0046, 0.0000,
-    0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
-    0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
-    0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
-    -0.0179, -0.0195, -0.0187, -0.0140, -0.0110, -0.0189,
+    0.0056,
+    -0.1543,
+    0.0000,
+    0.0333,
+    -0.1030,
+    -0.0446,
+    -0.1072,
+    -0.0802,
+    -0.0629,
+    -0.1088,
+    0.0184,
+    0.0000,
+    -0.0726,
+    -0.0790,
+    -0.0756,
+    -0.0565,
+    -0.0444,
+    -0.0767,
+    0.0130,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    -0.0512,
+    -0.0557,
+    -0.0533,
+    -0.0399,
+    -0.0313,
+    -0.0541,
+    0.0092,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    -0.0361,
+    -0.0393,
+    -0.0376,
+    -0.0281,
+    -0.0220,
+    -0.0381,
+    0.0065,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    -0.0255,
+    -0.0277,
+    -0.0265,
+    -0.0198,
+    -0.0155,
+    -0.0269,
+    0.0046,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    -0.0179,
+    -0.0195,
+    -0.0187,
+    -0.0140,
+    -0.0110,
+    -0.0189,
 )
 CM5_PAIR_D = {
     (1, 6): 0.0502,
@@ -65,13 +271,15 @@ QM_POPULATION_SECTION = "QM_POPULATION"
 
 @dataclass(frozen=True)
 class QMPopulationObservables:
-    """The mandatory default electronic observables used by ZION."""
+    """The mandatory default electronic observables used by ZAFF."""
 
     hirshfeld_charges: np.ndarray
     cm5_charges: np.ndarray
     mayer_bond_orders: np.ndarray
     electron_count: float
     charge: float
+    ecp_core_electrons: np.ndarray | None = None
+    spin_populations: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         hirshfeld = np.asarray(self.hirshfeld_charges, dtype=float).reshape(-1)
@@ -83,13 +291,27 @@ class QMPopulationObservables:
             raise ValueError("Mayer matrix must have shape natoms x natoms")
         if any(not np.all(np.isfinite(values)) for values in (hirshfeld, cm5, mayer)):
             raise ValueError("QM population observables contain non-finite values")
-        if not math.isfinite(float(self.electron_count)) or not math.isfinite(
-            float(self.charge)
-        ):
+        if not math.isfinite(float(self.electron_count)) or not math.isfinite(float(self.charge)):
             raise ValueError("electron count and molecular charge must be finite")
+        core = (
+            np.zeros(cm5.size, dtype=int)
+            if self.ecp_core_electrons is None
+            else np.asarray(self.ecp_core_electrons, dtype=int).reshape(-1)
+        )
+        if core.shape != cm5.shape or np.any(core < 0):
+            raise ValueError("ECP core-electron counts must be nonnegative and per atom")
+        spin = (
+            None
+            if self.spin_populations is None
+            else np.asarray(self.spin_populations, dtype=float).reshape(-1)
+        )
+        if spin is not None and (spin.shape != cm5.shape or not np.all(np.isfinite(spin))):
+            raise ValueError("spin populations must be finite and per atom")
         object.__setattr__(self, "hirshfeld_charges", hirshfeld)
         object.__setattr__(self, "cm5_charges", cm5)
         object.__setattr__(self, "mayer_bond_orders", 0.5 * (mayer + mayer.T))
+        object.__setattr__(self, "ecp_core_electrons", core)
+        object.__setattr__(self, "spin_populations", spin)
 
     @property
     def natoms(self) -> int:
@@ -101,17 +323,27 @@ class QMPopulationObservables:
             for left in range(self.natoms)
             for right in range(left + 1, self.natoms)
         ]
-        return {
+        payload = {
             "schema": "matrix.apoc.analysis.v1",
             "source": str(source),
             "charge_model": "CM5",
             "bond_order_model": "Mayer",
             "electron_count": float(self.electron_count),
             "molecular_charge": float(self.charge),
+            "ecp_core_electrons": self.ecp_core_electrons.tolist(),
+            "electron_space": (
+                "ECP_VALENCE_PLUS_FROZEN_CORE"
+                if np.any(self.ecp_core_electrons)
+                else "ALL_ELECTRON"
+            ),
             "hirshfeld_charges": self.hirshfeld_charges.tolist(),
             "cm5_charges": self.cm5_charges.tolist(),
             "mayer_bond_orders": pairs,
+            "spin_population_present": self.spin_populations is not None,
         }
+        if self.spin_populations is not None:
+            payload["spin_populations"] = self.spin_populations.tolist()
+        return payload
 
 
 def population_observables_from_dict(payload: dict[str, object]) -> QMPopulationObservables:
@@ -133,12 +365,20 @@ def population_observables_from_dict(payload: dict[str, object]) -> QMPopulation
         if not (0 <= i < cm5.size and 0 <= j < cm5.size and i != j):
             raise ValueError("invalid one-based Mayer pair in APOC data")
         mayer[i, j] = mayer[j, i] = float(value)
+    spin_payload = payload.get("spin_populations")
+    if payload.get("spin_population_present") is False:
+        spin_payload = None
     return QMPopulationObservables(
         hirshfeld_charges=hirshfeld,
         cm5_charges=cm5,
         mayer_bond_orders=mayer,
         electron_count=float(payload.get("electron_count", 0.0)),
         charge=float(payload.get("molecular_charge", np.sum(cm5))),
+        ecp_core_electrons=np.asarray(
+            payload.get("ecp_core_electrons", np.zeros(cm5.size)),
+            dtype=int,
+        ),
+        spin_populations=(None if spin_payload is None else np.asarray(spin_payload, dtype=float)),
     )
 
 
@@ -157,6 +397,8 @@ def qm_population_section_lines(
         "BOND_ORDER_MODEL Mayer",
         f"ELECTRON_COUNT {float(observables.electron_count):.12g}",
         f"MOLECULAR_CHARGE {float(observables.charge):.12g}",
+        "ECP_CORE_ELECTRONS "
+        + ",".join(str(int(value)) for value in observables.ecp_core_electrons),
         "[ATOMIC_CHARGES]",
         "COLUMNS ATOM HIRSHFELD CM5",
     ]
@@ -223,6 +465,16 @@ def parse_qm_population_section(lines: list[str]) -> tuple[QMPopulationObservabl
         mayer_bond_orders=mayer,
         electron_count=float(metadata["ELECTRON_COUNT"]),
         charge=float(metadata["MOLECULAR_CHARGE"]),
+        ecp_core_electrons=np.asarray(
+            [
+                int(value)
+                for value in metadata.get(
+                    "ECP_CORE_ELECTRONS",
+                    ",".join("0" for _ in range(natoms)),
+                ).split(",")
+            ],
+            dtype=int,
+        ),
     )
     return observables, metadata.get("SOURCE", "unspecified")
 
@@ -312,16 +564,13 @@ def hirshfeld_charges_from_grid(
     active = denominator > np.finfo(float).tiny
     stockholder = np.zeros_like(proatoms)
     stockholder[:, active] = proatoms[:, active] / denominator[active]
-    populations = np.sum(
-        stockholder * (weights * np.maximum(density, 0.0))[None, :], axis=1
-    )
+    populations = np.sum(stockholder * (weights * np.maximum(density, 0.0))[None, :], axis=1)
     charges = numbers.astype(float) - populations
     if expected_charge is not None:
         residual = float(expected_charge) - float(np.sum(charges))
         if abs(residual) > float(charge_tolerance):
             raise ValueError(
-                "Hirshfeld quadrature violates the molecular charge by "
-                f"{residual:.3e} e"
+                f"Hirshfeld quadrature violates the molecular charge by {residual:.3e} e"
             )
         charges += residual / numbers.size
     return charges
@@ -380,6 +629,58 @@ def mayer_bond_order_matrix(
                     )
                 )
             result[left, right] = result[right, left] = value
+    return result
+
+
+def mayer_spin_bond_order_matrix(
+    overlap,
+    ao_atom_indices,
+    *,
+    density_alpha,
+    density_beta,
+) -> np.ndarray:
+    """Return the signed alpha-minus-beta Mayer bond-order contribution.
+
+    The definition uses the same AO partition and normalization as the
+    unrestricted total Mayer matrix, but subtracts the beta-channel
+    contribution from the alpha-channel contribution.  It is therefore zero
+    for a restricted closed shell and changes sign when alpha and beta labels
+    are exchanged.  The matrix measures spin-selective covalency on bonds; it
+    is complementary to, and not a replacement for, an atomic spin density.
+    """
+
+    metric = np.asarray(overlap, dtype=float)
+    owners = np.asarray(ao_atom_indices, dtype=int).reshape(-1)
+    if metric.ndim != 2 or metric.shape[0] != metric.shape[1] or owners.size != metric.shape[0]:
+        raise ValueError("overlap and AO ownership arrays have incompatible shapes")
+    alpha_product = _square_density(density_alpha, metric.shape) @ metric
+    beta_product = _square_density(density_beta, metric.shape) @ metric
+    natoms = int(np.max(owners)) + 1 if owners.size else 0
+    if natoms < 1 or np.any(owners < 0) or set(owners) != set(range(natoms)):
+        raise ValueError("AO atom indices must be contiguous and zero-based")
+    result = np.zeros((natoms, natoms), dtype=float)
+    atom_aos = [np.flatnonzero(owners == atom) for atom in range(natoms)]
+    for left in range(natoms):
+        mu = atom_aos[left]
+        for right in range(left + 1, natoms):
+            nu = atom_aos[right]
+            alpha = 2.0 * float(
+                np.einsum(
+                    "ij,ji->",
+                    alpha_product[np.ix_(mu, nu)],
+                    alpha_product[np.ix_(nu, mu)],
+                    optimize=True,
+                )
+            )
+            beta = 2.0 * float(
+                np.einsum(
+                    "ij,ji->",
+                    beta_product[np.ix_(mu, nu)],
+                    beta_product[np.ix_(nu, mu)],
+                    optimize=True,
+                )
+            )
+            result[left, right] = result[right, left] = alpha - beta
     return result
 
 

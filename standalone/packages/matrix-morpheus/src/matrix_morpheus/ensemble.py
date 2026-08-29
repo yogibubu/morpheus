@@ -10,31 +10,31 @@ import tomllib
 import numpy as np
 
 from matrix_chem.topology.pipeline import build_topology_objects
-from matrix_core.numerics import RankCondition, rank_condition
+from matrix_morpheus.numerics import RankCondition, rank_condition
 
 from .contracts import SemiexperimentalFitRequest
-from .fit import (
-    MeasurementModel,
+from .coordinate_model import (
     _active_mask,
     _atomic_number,
-    _build_measurement_model,
-    _combined_fixed_parameters,
-    _fixed_primitives_from_patterns,
     _gic_fixed_patterns,
     _gic_model,
-    _gic_values,
     _gicforge_a1_mask,
-    _jacobian_constants_wrt_gics,
     _make_gicforge_backend,
-    _measurement_vector,
-    _request_with_auto_resolved_isotopologues,
     _symmetry_expanded_fixed_primitives,
+)
+from .constraints import _fixed_primitives_from_patterns, _gic_values
+from .fit_outputs import _combined_fixed_parameters, _request_with_auto_resolved_isotopologues
+from .measurement_model import (
+    _build_measurement_model,
+    _jacobian_constants_wrt_gics,
+    _measurement_vector,
     _validate_observations,
 )
+from .models import MeasurementModel
 from .geometry_input import read_geometry_input
 from .io import read_observations
 from .job_input import read_semiexperimental_job
-from .msr_legacy import is_msr_legacy_file, read_msr_legacy_input
+from .msr_import import is_msr_file, read_msr_input
 
 
 ENSEMBLE_JOB_SCHEMA = "oracle.semiexp.ensemble.v1"
@@ -681,8 +681,6 @@ def _normalize_kind(kind: str) -> str:
     return aliases.get(text, "")
 
 
-def _primitive_tokens(label: str) -> tuple[tuple[str, tuple[int, ...]], ...]:
-    return tuple((kind, indices) for kind, indices, _coeff in _primitive_terms(label))
 
 
 def _primitive_terms(label: str) -> tuple[tuple[str, tuple[int, ...], float], ...]:
@@ -723,8 +721,6 @@ def _primitive_terms(label: str) -> tuple[tuple[str, tuple[int, ...], float], ..
     return tuple((kind, indices, 1.0) for kind, indices in tokens)
 
 
-def _primitive_symbols(indices: tuple[int, ...], atoms: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(sorted(_primitive_ordered_symbols(indices, atoms)))
 
 
 def _term_value_in_range(
@@ -923,8 +919,8 @@ def _ensemble_molecules_from_mapping(path: Path, items: object) -> list[Ensemble
         if not job_path:
             raise ValueError("Each ensemble molecule needs a job path")
         resolved_job = _resolve_relative(path, Path(str(job_path)))
-        if is_msr_legacy_file(resolved_job):
-            legacy = read_msr_legacy_input(resolved_job)
+        if is_msr_file(resolved_job):
+            legacy = read_msr_input(resolved_job)
             if not legacy.observations:
                 raise ValueError(
                     f"Ensemble molecule {name or resolved_job.stem!r} has no observations"
@@ -1129,17 +1125,6 @@ def _solve_scaled_weighted_lstsq(
     )
 
 
-def _covariance_from_weighted_design(weighted_design: np.ndarray, *, rcond: float) -> np.ndarray:
-    if weighted_design.size == 0:
-        return np.zeros((0, 0), dtype=float)
-    _u, s, vt = np.linalg.svd(weighted_design, full_matrices=False)
-    if not len(s):
-        return np.zeros((weighted_design.shape[1], weighted_design.shape[1]), dtype=float)
-    cutoff = _svd_cutoff(s, weighted_design.shape, rcond=rcond)
-    inv_s2 = np.array(
-        [1.0 / (value * value) if value > cutoff else 0.0 for value in s], dtype=float
-    )
-    return (vt.T * inv_s2) @ vt
 
 
 def _covariance_from_svd(singular: np.ndarray, vt: np.ndarray, keep: np.ndarray) -> np.ndarray:

@@ -1,4 +1,4 @@
-"""Tamper-evident, append-only provenance for The ONE projects.
+"""Tamper-evident, append-only provenance for Keymaker projects.
 
 The ledger records orchestration decisions and references scientific run
 manifests.  Numerical payloads remain in their native artifacts; this module
@@ -21,8 +21,8 @@ from .manifest import sha256_file
 from .workspace import WorkspaceLayout
 
 
-PROVENANCE_SCHEMA = "matrix.the_one.provenance.event.v1"
-PROVENANCE_FILENAME = "the-one-provenance.jsonl"
+PROVENANCE_SCHEMA = "matrix.keymaker.provenance.event.v1"
+PROVENANCE_FILENAME = "keymaker-provenance.jsonl"
 PROVENANCE_EVENT_TYPES = frozenset(
     {
         "project.created",

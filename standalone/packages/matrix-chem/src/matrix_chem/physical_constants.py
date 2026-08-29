@@ -2,7 +2,6 @@
 
 from enum import IntEnum
 from typing import Dict
-import numpy as np
 
 
 class Phy(IntEnum):

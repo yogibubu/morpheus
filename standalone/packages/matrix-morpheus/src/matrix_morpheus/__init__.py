@@ -41,9 +41,11 @@ from .dual_deltavib import (
     dual_deltabvib_to_dict,
 )
 from .integrated_workflow import (
+    MorpheusDeltaBVibResolution,
     MorpheusGeometryLevels,
     REFERENCE_GEOMETRY_LEVELS,
     R0PreflightResult,
+    TrinityAssistedSemiexperimentalFit,
     fit_ground_state_r0_geometry,
     prepare_structural_reference,
 )
@@ -65,6 +67,12 @@ from .xyzin_observations import (
     xyzin_records_from_observations,
 )
 from .xyzin_preprocess import SemiexperimentalXyzinPreprocessResult, prepare_semiexperimental_xyzin
+from .trinity_deltabvib import (
+    DeltaBVibResolutionResult,
+    TrinityAssistedSemiexperimentalFitResult,
+    fit_semiexperimental_with_trinity,
+    resolve_xyzin_deltabvib,
+)
 from .kraitchman import (
     KraitchmanComparison,
     KraitchmanSeedResult,
@@ -90,16 +98,23 @@ from .job_input import (
     is_semiexperimental_job_file,
     read_semiexperimental_job,
 )
-from .msr_legacy import (
+from .msr_import import (
+    MSR_INPUT_SUFFIXES,
+    MSRControls,
+    MSRInput,
     MSR_LEGACY_SUFFIXES,
     MSRLegacyControls,
     MSRLegacyInput,
+    is_msr_file,
     is_msr_legacy_file,
+    read_msr_geometry,
+    read_msr_input,
+    read_msr_observations,
     read_msr_legacy_geometry,
     read_msr_legacy_input,
     read_msr_legacy_observations,
 )
-from .fit import (
+from .models import (
     SemiexperimentalFitDiagnostics,
     SemiexperimentalFitResult,
     SemiexperimentalGeometryParameter,
@@ -108,13 +123,17 @@ from .fit import (
     SemiexperimentalParameter,
     SemiexperimentalResidual,
     SemiexperimentalRotationalConstantComparison,
+)
+from .fit import (
     fit_semiexperimental_geometry,
+    write_semiexperimental_outputs,
+)
+from .fit_outputs import (
     geometry_parameters_csv,
     parameters_csv,
     residuals_csv,
     rotational_constants_csv,
     semiexperimental_text_report,
-    write_semiexperimental_outputs,
 )
 from .statistics import SemiexperimentalWeightDiagnostic
 from .validation import (
@@ -248,6 +267,7 @@ __all__ = [
     "DEFAULT_SEMIEXP_OBSERVABLE",
     "DEFAULT_SEMIEXP_ROBUST_LOSS",
     "DEFAULT_SEMIEXP_ROTATIONAL_COMPONENTS",
+    "DEFAULT_INITIAL_GEOMETRY_PREDICATE_SCOPE",
     "DEFAULT_SE_GEOMETRY_LIBRARY",
     "DEFAULT_SEMIEXP_BENCHMARK_OUTPUT_DIR",
     "DEFAULT_SEMIEXP_BENCHMARK_SNAPSHOT",
@@ -283,6 +303,8 @@ __all__ = [
     "SemiexperimentalFitResult",
     "SemiexperimentalGeometryInput",
     "SemiexperimentalJobInput",
+    "MSRInput",
+    "MSRControls",
     "MSRLegacyInput",
     "MSRLegacyControls",
     "SemiexperimentalBenchmarkCase",
@@ -309,6 +331,10 @@ __all__ = [
     "SemiexperimentalXyzinPreprocessResult",
     "IsotopologueObservation",
     "IsotopologueDeltaBVib",
+    "DeltaBVibResolutionResult",
+    "TrinityAssistedSemiexperimentalFitResult",
+    "fit_semiexperimental_with_trinity",
+    "resolve_xyzin_deltabvib",
     "REFERENCE_GEOMETRY_LEVELS",
     "R0PreflightResult",
     "QMParameterPredicate",
@@ -332,6 +358,8 @@ __all__ = [
     "combine_isotopic_deltabvib_channels",
     "dual_deltabvib_to_dict",
     "fit_ground_state_r0_geometry",
+    "MorpheusDeltaBVibResolution",
+    "TrinityAssistedSemiexperimentalFit",
     "prepare_structural_reference",
     "read_microwave_literature_dataset",
     "write_microwave_literature_template",
@@ -432,5 +460,10 @@ __all__ = [
     "is_semiexperimental_job_file",
     "SEMIEXP_JOB_SCHEMA",
     "MSR_LEGACY_SUFFIXES",
+    "MSR_INPUT_SUFFIXES",
+    "is_msr_file",
     "is_msr_legacy_file",
+    "read_msr_input",
+    "read_msr_geometry",
+    "read_msr_observations",
 ]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from importlib import resources
 from importlib.util import find_spec
 import json
@@ -16,7 +17,7 @@ _MATRIX_COMMANDS = {
     "fit": "semiexp",
     "ensemble": "semiexp-ensemble",
     "ensemble-paper": "semiexp-ensemble-paper",
-    "ensemble-scan": "semiexp-ensemble-scan",
+    "ensemble-scan": "semiexp-ensemble-prior-scan",
     "ensemble-synthon-scan": "semiexp-ensemble-synthon-scan",
     "benchmark": "semiexp-benchmark",
 }
@@ -44,9 +45,26 @@ def main(argv: list[str] | None = None) -> int:
         forwarded = arguments
     else:
         forwarded = arguments[1:]
-    from matrix_core.cli import main as matrix_main
+    return _workflow_main([command, *forwarded])
 
-    return matrix_main([command, *forwarded], prog="MORPHEUS")
+
+def _workflow_main(arguments: list[str]) -> int:
+    """Parse and execute MORPHEUS workflows without the aggregate MATRIX CLI."""
+    from .cli_commands import dispatch
+    from .cli_parser import add_commands
+    from .cli_support import UNHANDLED
+
+    parser = argparse.ArgumentParser(
+        prog="MORPHEUS",
+        description="MORPHEUS semiexperimental refinement CLI",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    add_commands(subparsers, root=Path.cwd())
+    parsed = parser.parse_args(arguments)
+    result = dispatch(parsed, parser, Path.cwd())
+    if result is UNHANDLED:
+        parser.error(f"unsupported MORPHEUS command: {parsed.command}")
+    return int(result)
 
 
 def _print_help() -> None:
@@ -77,17 +95,36 @@ def _doctor(arguments: list[str]) -> int:
     if unknown:
         print(f"doctor: unexpected arguments: {' '.join(unknown)}", file=sys.stderr)
         return 2
-    modules = ("numpy", "matrix_core", "matrix_chem", "matrix_link", "matrix_smith")
+    modules = (
+        "numpy",
+        "matrix_core",
+        "matrix_chem",
+        "matrix_link",
+        "matrix_smith",
+        "matrix_gaussian",
+        "matrix_oracle",
+        "matrix_trinity",
+    )
     checks = {name: find_spec(name) is not None for name in modules}
+    try:
+        from .cli_commands import dispatch as _dispatch  # noqa: F401
+        from .cli_parser import add_commands as _add_commands  # noqa: F401
+    except Exception:
+        standalone_dispatch = False
+    else:
+        standalone_dispatch = True
     payload = {
         "schema": "matrix.morpheus.doctor.v1",
         "morpheus_version": __version__,
         "python": sys.version.split()[0],
         "python_supported": sys.version_info >= (3, 11),
         "required_modules": checks,
+        "standalone_dispatch": standalone_dispatch,
     }
     payload["status"] = (
-        "PASS" if payload["python_supported"] and all(checks.values()) else "FAIL"
+        "PASS"
+        if payload["python_supported"] and all(checks.values()) and standalone_dispatch
+        else "FAIL"
     )
     if "--json" in arguments:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -96,6 +133,7 @@ def _doctor(arguments: list[str]) -> int:
         print(f"Python {payload['python']}: {'PASS' if payload['python_supported'] else 'FAIL'}")
         for name, available in checks.items():
             print(f"required {name}: {'PASS' if available else 'FAIL'}")
+        print(f"standalone command dispatch: {'PASS' if standalone_dispatch else 'FAIL'}")
     return 0 if payload["status"] == "PASS" else 1
 
 

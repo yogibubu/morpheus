@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
+from matrix_core import atomic_json_write, require_authorized_descendant_calculation
 from .optimizer import (
     GeometryEvaluationService,
     OptimizerCoordinateModel,
@@ -25,7 +26,11 @@ from .scan import (
     QMScanBackend,
     prepare_pes_exploration_geometry,
 )
-from .active_variables import ActiveVariableContract, LINK_ACTIVE_VARIABLES_SCHEMA
+from .active_variables import (
+    ActiveVariableContract,
+    LINK_ACTIVE_VARIABLES_SCHEMA,
+    gic_metadata_for_contract,
+)
 from .sentinel_protocol import (
     CHECKPOINT_SCHEMA,
     ERROR_SCHEMA,
@@ -106,6 +111,8 @@ def run_external_driver_loop(
     resume: bool = False,
     run_id: str | None = None,
     retained_group: str = "C1",
+    independent_candidates: bool = False,
+    geometry_filter: Mapping[str, object] | None = None,
 ) -> ExternalDriverResult:
     """Run LINK as a SONIC/Cartesian service controlled by an external driver.
 
@@ -129,7 +136,13 @@ def run_external_driver_loop(
         raise FileExistsError(
             f"LINK-SENTINEL run already exists at {root}; use resume=True or a new run directory"
         )
-    exploration_policy = PESExplorationPolicy(retained_group=retained_group)
+    if independent_candidates and str(retained_group).strip().upper() != "C1":
+        raise ValueError("independent-candidate policy requires retained_group C1")
+    exploration_policy = (
+        PESExplorationPolicy.monte_carlo()
+        if independent_candidates
+        else PESExplorationPolicy(retained_group=retained_group)
+    )
     model = coordinate_model
     if model is None:
         model = coordinate_model_from_xyzin(
@@ -272,6 +285,7 @@ def run_external_driver_loop(
             reference_values=reference_values,
             cycle=cycle,
             batch_workers=int(batch_workers),
+            geometry_filter=geometry_filter,
         )
         point_count += len(records)
         request_path = cycle_dir / "request.json"
@@ -437,6 +451,7 @@ def _realize_and_evaluate_points(
     reference_values: np.ndarray,
     cycle: int,
     batch_workers: int,
+    geometry_filter: Mapping[str, object] | None,
 ) -> list[dict[str, object]]:
     calculator_ids = {point.calculator_id for point in points}
     property_sets = {point.requested_properties for point in points}
@@ -445,19 +460,20 @@ def _realize_and_evaluate_points(
         and all(point.evaluation_owner == "link" for point in points)
         and len(calculator_ids) == 1
         and len(property_sets) == 1
+        and geometry_filter is None
     ):
         calculator_id = next(iter(calculator_ids))
         evaluation_service = services.get(calculator_id)
         if evaluation_service is None:
             raise ValueError(f"unknown LINK calculator_id: {calculator_id}")
-        if evaluation_service.supports_architect_batch():
+        if evaluation_service.supports_resident_potential_batch():
             for point in points:
                 if point.q.shape != reference_values.shape:
                     raise ValueError(
                         "driver SONIC vector length does not match the frozen contract"
                     )
             properties = next(iter(property_sets))
-            evaluations = evaluation_service.evaluate_architect_batch(
+            evaluations = evaluation_service.evaluate_resident_potential_batch(
                 tuple(point.q for point in points),
                 tags=tuple(
                     f"external-driver-{cycle}-{point.point_id}" for point in points
@@ -490,15 +506,46 @@ def _realize_and_evaluate_points(
                 raise ValueError(f"unknown LINK calculator_id: {point.calculator_id}")
             if evaluation_service.backend is None and not evaluation_service.engine_command.strip():
                 raise ValueError("LINK-owned evaluation needs --backend or --engine-command")
-            evaluation = evaluation_service.evaluate(
-                point.q,
-                tag=f"external-driver-{cycle}-{point.point_id}",
-                use_cache=False,
-                requested_properties=point.requested_properties,
+            coordinates = evaluation_service.coordinates_from_q(point.q)
+            rejection = geometry_filter_rejection(
+                evaluation_service,
+                coordinates,
+                geometry_filter,
             )
-            coordinates = evaluation.coordinates_angstrom
-            realized_q = evaluation.q
-            result = evaluation.result
+            if rejection is None:
+                evaluation = evaluation_service.evaluate(
+                    point.q,
+                    tag=f"external-driver-{cycle}-{point.point_id}",
+                    use_cache=True,
+                    requested_properties=point.requested_properties,
+                    realized_coordinates_angstrom=coordinates,
+                )
+                coordinates = evaluation.coordinates_angstrom
+                realized_q = evaluation.q
+                result = evaluation.result
+            else:
+                if set(point.requested_properties) - {"energy"}:
+                    raise ValueError(
+                        "geometry prefilters support energy-only candidate evaluation"
+                    )
+                realized_q = point.q.copy()
+                penalty = float(
+                    (geometry_filter or {}).get("penalty_energy_hartree", 1.0e3)
+                )
+                result = PointEvaluationResult(
+                    point_index=-1,
+                    displacement=0.0,
+                    energy_hartree=penalty,
+                    backend_coordinates_angstrom=coordinates,
+                    status="completed",
+                    source="LINK geometry prefilter",
+                    message=rejection,
+                    execution={
+                        "energy_evaluations": 0,
+                        "gradient_evaluations": 0,
+                        "geometry_filter_rejection": rejection,
+                    },
+                )
             _require_properties(result, point.requested_properties, point.point_id)
             record_service = evaluation_service
         else:
@@ -520,6 +567,74 @@ def _realize_and_evaluate_points(
         return [realize(point) for point in points]
     with ThreadPoolExecutor(max_workers=batch_workers) as pool:
         return list(pool.map(realize, points))
+
+
+def geometry_filter_rejection(
+    service: GeometryEvaluationService,
+    coordinates_angstrom: np.ndarray,
+    config: Mapping[str, object] | None,
+) -> str | None:
+    """Return the native MATRIX connectivity/clash rejection, if any.
+
+    The service argument is intentionally structural: owner bridges may reuse
+    this exact LINK filter for rigid-fragment candidates without duplicating
+    collision criteria.
+    """
+    if config is None:
+        return None
+    from matrix_chem import topology_bonds_from_xyzin
+    from matrix_chem.topology.covalent_radii import covalent_radius
+    from matrix_chem.topology.elements import atomic_number
+
+    coords = np.asarray(coordinates_angstrom, dtype=float)
+    reference = np.asarray(service.reference_coordinates, dtype=float)
+    bonds = tuple(
+        (left - 1, right - 1)
+        for left, right in topology_bonds_from_xyzin(service.xyzin_path)
+    )
+    if bool(config.get("preserve_connectivity", True)):
+        minimum_ratio = float(config.get("minimum_bond_ratio", 0.65))
+        maximum_ratio = float(config.get("maximum_bond_ratio", 1.45))
+        for left, right in bonds:
+            reference_distance = float(np.linalg.norm(reference[left] - reference[right]))
+            distance = float(np.linalg.norm(coords[left] - coords[right]))
+            ratio = distance / max(reference_distance, 1.0e-12)
+            if not minimum_ratio <= ratio <= maximum_ratio:
+                return (
+                    f"bond {left + 1}-{right + 1} changed to "
+                    f"{ratio:.3f} times its reference length"
+                )
+    bonded = {tuple(sorted(pair)) for pair in bonds}
+    adjacency = [set() for _ in service.atoms]
+    for left, right in bonds:
+        adjacency[left].add(right)
+        adjacency[right].add(left)
+    excluded = set(bonded)
+    for center, neighbors in enumerate(adjacency):
+        for left in neighbors:
+            for right in neighbors:
+                if left < right:
+                    excluded.add((left, right))
+    scale = float(config.get("minimum_nonbonded_covalent_scale", 0.65))
+    numbers = tuple(int(atomic_number(atom) or 0) for atom in service.atoms)
+    for left in range(len(coords)):
+        for right in range(left + 1, len(coords)):
+            if (left, right) in excluded:
+                continue
+            radius_left = float(covalent_radius(numbers[left]) or 0.75)
+            radius_right = float(covalent_radius(numbers[right]) or 0.75)
+            minimum = scale * (radius_left + radius_right)
+            distance = float(np.linalg.norm(coords[left] - coords[right]))
+            if distance < minimum:
+                return (
+                    f"nonbonded collision {left + 1}-{right + 1}: "
+                    f"{distance:.3f} < {minimum:.3f} angstrom"
+                )
+    return None
+
+
+# Compatibility for callers that used the former module-private spelling.
+_geometry_filter_rejection = geometry_filter_rejection
 
 
 def _point_record(
@@ -856,6 +971,12 @@ def _invoke_driver(
         "cycle": str(cycle),
     }
     command = [part.format(**mapping) for part in shlex.split(command_template)]
+    require_authorized_descendant_calculation(
+        backend="TRINITY/external-LINK-driver",
+        input_path=request_path,
+        command=command,
+        workdir=request_path.parent,
+    )
     completed = subprocess.run(
         command,
         cwd=request_path.parent,
@@ -891,6 +1012,7 @@ def _direct_variable_contract_payload(
     sonic_labels: Sequence[str],
     reference_values: np.ndarray,
 ) -> dict[str, object]:
+    definition = model.sonic_definition
     return {
         "schema": LINK_ACTIVE_VARIABLES_SCHEMA,
         "source": "LINK command line",
@@ -903,6 +1025,11 @@ def _direct_variable_contract_payload(
                 "coordinate": sonic,
                 "reference_value": float(reference),
                 "units": "SONIC-unit",
+                **(
+                    gic_metadata_for_contract(definition, sonic)
+                    if definition is not None
+                    else {}
+                ),
             }
             for name, sonic, reference in zip(model.labels, sonic_labels, reference_values)
         ],
@@ -951,13 +1078,7 @@ def _optional_array(value: object) -> np.ndarray | None:
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(payload, allow_nan=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+    atomic_json_write(path, payload, allow_nan=False)
     return path
 
 

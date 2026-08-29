@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
 
 from matrix_core import (
     BasicSection,
@@ -16,11 +15,24 @@ from matrix_core import (
 )
 
 from .geometry import MolecularGeometry
+from .geometry_identity import (
+    GEOMETRY_CHANGE_NOT_AUTHORIZED,
+    GEOMETRY_CHANGE_ORACLE_SYMMETRY_PROJECTION,
+    GEOMETRY_TRUE_CHANGE,
+    GeometryIdentityCertificate,
+    build_geometry_identity_certificate,
+    write_geometry_identity_certificate,
+)
 from .geometry_io import GeometrySourceKind, read_geometry_with_kind
 from .symmetry import (
+    CARTESIAN_SYMMETRIZATION_NOOP_TOLERANCE_ANGSTROM,
+    analyze_molecular_quasisymmetry,
+    canonicalize_molecular_geometry_by_symmetry,
     MolecularSymmetry,
     SymmetryOperation,
+    SymmetryProjectionDiagnostics,
     analyze_molecular_symmetry,
+    orient_molecular_geometry_to_principal_axes,
     symmetry_section_lines,
     symmetry_projection_diagnostics,
     symmetrize_molecular_geometry,
@@ -30,6 +42,12 @@ from .topology.contracts import (
     MATRIX_XYZ_TOPOLOGY_SCHEMA,
 )
 from .topology.pipeline import build_topology_objects
+from .topology.aromaticity import aromaticity_section_lines
+from .topology.automorphisms import (
+    build_topology_automorphism_orbits,
+    topology_automorphism_edge_labels,
+    topology_automorphism_lines,
+)
 from .primitive_coordinates import build_primitive_contract, write_primitive_contract
 
 
@@ -47,6 +65,13 @@ class LinkPreprocessResult:
     point_group: str
     topology_bond_count: int
     ring_count: int
+    cartesian_symmetry_status: str
+    symmetrization_required_threshold_angstrom: float | None
+    cartesian_symmetrization_decision: str
+    input_geometry: MolecularGeometry
+    input_symmetry_max_deviation_angstrom: float
+    proposed_point_group: str
+    geometry_identity: GeometryIdentityCertificate
 
 
 def preprocess_to_enriched_xyz(
@@ -55,6 +80,7 @@ def preprocess_to_enriched_xyz(
     *,
     source_kind: GeometrySourceKind = "auto",
     symmetry_thresholds: SymmetryThresholds = SymmetryThresholds(),
+    cartesian_symmetrization: str = "apply",
 ) -> LinkPreprocessResult:
     """Import a geometry source and materialize initial MATRIX sections.
 
@@ -62,22 +88,162 @@ def preprocess_to_enriched_xyz(
     a `MolecularGeometry`.
     """
     imported_geometry = read_geometry_with_kind(Path(source), source_kind)
+    mode = str(cartesian_symmetrization).strip().casefold()
+    if mode not in {"inspect", "apply", "retain"}:
+        raise ValueError(
+            "cartesian_symmetrization must be 'inspect', 'apply', or 'retain'"
+        )
+    oriented_geometry = orient_molecular_geometry_to_principal_axes(
+        imported_geometry,
+        inertia_tolerance=symmetry_thresholds.inertia_relative,
+    )
+    initial_topology_bonds, initial_topology_edge_labels = _primary_topology_signature(
+        oriented_geometry
+    )
+    quasi_analysis = analyze_molecular_quasisymmetry(
+        oriented_geometry,
+        distance_tolerance=symmetry_thresholds.distance_angstrom,
+        inertia_tolerance=symmetry_thresholds.inertia_relative,
+        max_rotation_order=symmetry_thresholds.max_rotation_order,
+        topology_bonds=initial_topology_bonds,
+        topology_edge_labels=initial_topology_edge_labels,
+    )
+    assigned_symmetry = quasi_analysis.proposed_symmetry
+    recognition_tolerance = quasi_analysis.recognition_tolerance_angstrom
+    if quasi_analysis.promoted:
+        projected_preview = symmetrize_molecular_geometry(
+            oriented_geometry,
+            assigned_symmetry,
+            minimum_deviation_angstrom=0.0,
+            force_projection=True,
+        )
+        if _primary_topology_signature(projected_preview) != (
+            initial_topology_bonds,
+            initial_topology_edge_labels,
+        ):
+            # A quasi-symmetry projection is never allowed to alter ORACLE's
+            # primary connectivity.  Retain the strict assignment instead.
+            assigned_symmetry = quasi_analysis.strict_symmetry
+            recognition_tolerance = symmetry_thresholds.distance_angstrom
+    input_symmetry_max_deviation = float(assigned_symmetry.max_deviation)
+    proposed_point_group = str(assigned_symmetry.point_group)
+    nontrivial_group = assigned_symmetry.point_group.strip().upper() not in {
+        "", "C1", "UNKNOWN"
+    }
+    quasi_symmetry = bool(
+        nontrivial_group
+        and assigned_symmetry.max_deviation
+        > CARTESIAN_SYMMETRIZATION_NOOP_TOLERANCE_ANGSTROM
+    )
+    required_threshold = (
+        float(assigned_symmetry.max_deviation) if quasi_symmetry else None
+    )
+    projection_applied = False
+    if quasi_symmetry and mode == "apply":
+        geometry, assigned_symmetry, symmetry = canonicalize_molecular_geometry_by_symmetry(
+            imported_geometry,
+            distance_tolerance=recognition_tolerance,
+            inertia_tolerance=symmetry_thresholds.inertia_relative,
+            max_rotation_order=symmetry_thresholds.max_rotation_order,
+            coordinate_decimals=10,
+        )
+        projection = symmetry_projection_diagnostics(
+            oriented_geometry,
+            geometry,
+            assigned_symmetry,
+        )
+        cartesian_symmetry_status = "QUASI_SYMMETRY_PROJECTED"
+        cartesian_symmetrization_decision = "SYMMETRIZE"
+        projection_applied = True
+    else:
+        symmetry = assigned_symmetry
+        if quasi_symmetry:
+            geometry = oriented_geometry
+            # Inspection/retention never accepts a higher quasi-symmetry
+            # group implicitly.  Keep the exact retained geometry's group as
+            # the operative contract and serialize the topology-qualified
+            # larger group only in diagnostics until PROJECT is explicit.
+            symmetry = analyze_molecular_symmetry(
+                oriented_geometry,
+                distance_tolerance=CARTESIAN_SYMMETRIZATION_NOOP_TOLERANCE_ANGSTROM,
+                inertia_tolerance=symmetry_thresholds.inertia_relative,
+                max_rotation_order=symmetry_thresholds.max_rotation_order,
+            )
+            projection_status = (
+                "AWAITING_USER_CONFIRMATION" if mode == "inspect" else "DECLINED_BY_USER"
+            )
+            if mode == "retain":
+                cartesian_symmetry_status = "QUASI_SYMMETRY_RETAINED"
+            else:
+                cartesian_symmetry_status = "QUASI_SYMMETRY"
+            cartesian_symmetrization_decision = (
+                "PENDING" if mode == "inspect" else "RETAIN"
+            )
+        elif nontrivial_group:
+            if mode == "apply":
+                geometry = symmetrize_molecular_geometry(
+                    oriented_geometry,
+                    assigned_symmetry,
+                    minimum_deviation_angstrom=0.0,
+                )
+                projection = symmetry_projection_diagnostics(
+                    oriented_geometry,
+                    geometry,
+                    assigned_symmetry,
+                )
+                projection_status = "APPLIED_WITHIN_NUMERICAL_SYMMETRY_BAND"
+                cartesian_symmetrization_decision = "SYMMETRIZE"
+                projection_applied = True
+            else:
+                geometry = oriented_geometry
+                projection = SymmetryProjectionDiagnostics(
+                    status="NOT_REQUIRED_EXACT_SYMMETRY",
+                    max_displacement_angstrom=0.0,
+                    rms_displacement_angstrom=0.0,
+                )
+                projection_status = "NOT_REQUIRED_EXACT_SYMMETRY"
+                cartesian_symmetrization_decision = "NOT_REQUIRED"
+            cartesian_symmetry_status = "EXACT_SYMMETRY"
+        else:
+            geometry = oriented_geometry
+            projection_status = "NOT_APPLICABLE_C1"
+            cartesian_symmetry_status = "C1"
+            cartesian_symmetrization_decision = "NOT_APPLICABLE"
+        if not (nontrivial_group and mode == "apply"):
+            projection = SymmetryProjectionDiagnostics(
+                status=projection_status,
+                max_displacement_angstrom=0.0,
+                rms_displacement_angstrom=0.0,
+            )
     # A newly imported Cartesian geometry starts a new ORACLE state.  Do not
     # retain stale downstream sections (for example SMITH #GIC) from an older
     # geometry that happened to use the same output path.
-    write_sectioned_lines(Path(target), imported_geometry.xyz_lines())
+    write_sectioned_lines(Path(target), geometry.xyz_lines())
     write_source_section(
         target, source=Path(source), source_kind=source_kind, geometry=imported_geometry
     )
+    serialized_geometry = read_geometry_with_kind(Path(target), "enriched_xyz")
+    geometry_identity = build_geometry_identity_certificate(
+        imported_geometry.atoms,
+        imported_geometry.coordinates_angstrom,
+        serialized_geometry.atoms,
+        serialized_geometry.coordinates_angstrom,
+        geometry_change_authorization=GEOMETRY_CHANGE_NOT_AUTHORIZED,
+    )
+    if projection_applied and geometry_identity.relation == GEOMETRY_TRUE_CHANGE:
+        geometry_identity = build_geometry_identity_certificate(
+            imported_geometry.atoms,
+            imported_geometry.coordinates_angstrom,
+            serialized_geometry.atoms,
+            serialized_geometry.coordinates_angstrom,
+            geometry_change_authorization=GEOMETRY_CHANGE_ORACLE_SYMMETRY_PROJECTION,
+        )
+    write_geometry_identity_certificate(target, geometry_identity)
     write_gaussian_topology_section(target, source=Path(source))
     write_smiles_section(target, imported_geometry)
-    # Chemical topology belongs to the imported Cartesian observation and is
-    # frozen before the sub-tolerance symmetry projection.
-    bond_count, ring_count = write_topology_and_synthons_sections(target, imported_geometry)
-    symmetry = determine_initial_symmetry(imported_geometry, symmetry_thresholds)
-    geometry = symmetrize_molecular_geometry(imported_geometry, symmetry)
-    projection = symmetry_projection_diagnostics(imported_geometry, geometry, symmetry)
-    write_enriched_geometry(target, geometry)
+    # From this point onward every ORACLE and downstream tool consumes only
+    # the centered, principal-axis-oriented and symmetry-projected geometry.
+    bond_count, ring_count = write_topology_and_synthons_sections(target, geometry)
     point_group = symmetry.point_group
     write_basic_section_from_geometry(target, geometry=geometry, point_group=point_group)
     write_symmetry_section(
@@ -85,6 +251,11 @@ def preprocess_to_enriched_xyz(
         symmetry=symmetry,
         thresholds=symmetry_thresholds,
         projection=projection,
+        cartesian_symmetry_status=cartesian_symmetry_status,
+        symmetrization_required_threshold_angstrom=required_threshold,
+        cartesian_symmetrization_decision=cartesian_symmetrization_decision,
+        input_symmetry_max_deviation_angstrom=input_symmetry_max_deviation,
+        proposed_point_group=proposed_point_group,
     )
     write_primitive_coordinate_section(target, geometry)
     return LinkPreprocessResult(
@@ -93,7 +264,33 @@ def preprocess_to_enriched_xyz(
         point_group=point_group,
         topology_bond_count=bond_count,
         ring_count=ring_count,
+        cartesian_symmetry_status=cartesian_symmetry_status,
+        symmetrization_required_threshold_angstrom=required_threshold,
+        cartesian_symmetrization_decision=cartesian_symmetrization_decision,
+        input_geometry=imported_geometry,
+        input_symmetry_max_deviation_angstrom=input_symmetry_max_deviation,
+        proposed_point_group=proposed_point_group,
+        geometry_identity=geometry_identity,
     )
+
+
+def _primary_topology_signature(
+    geometry: MolecularGeometry,
+) -> tuple[tuple[tuple[int, int], ...], dict[tuple[int, int], str]]:
+    atomic_numbers = tuple(_atomic_number(atom) for atom in geometry.atoms)
+    _continuous, discrete, _rings, synthons, aromaticity = build_topology_objects(
+        geometry.coordinates_angstrom,
+        atomic_numbers,
+    )
+    bonds = tuple(
+        sorted(tuple(sorted((int(left), int(right)))) for left, right in discrete.bonds)
+    )
+    edge_labels = topology_automorphism_edge_labels(
+        discrete,
+        synthons,
+        aromaticity=aromaticity,
+    )
+    return bonds, edge_labels
 
 
 def write_primitive_coordinate_section(path: Path, geometry: MolecularGeometry) -> None:
@@ -293,11 +490,29 @@ def write_symmetry_section(
     symmetry,
     thresholds: SymmetryThresholds,
     projection=None,
+    cartesian_symmetry_status: str | None = None,
+    symmetrization_required_threshold_angstrom: float | None = None,
+    cartesian_symmetrization_decision: str | None = None,
+    input_symmetry_max_deviation_angstrom: float | None = None,
+    proposed_point_group: str | None = None,
 ) -> None:
     replace_section(
         Path(path),
         "SYMMETRY",
-        symmetry_section_lines(symmetry, thresholds=thresholds, projection=projection),
+        symmetry_section_lines(
+            symmetry,
+            thresholds=thresholds,
+            projection=projection,
+            cartesian_symmetry_status=cartesian_symmetry_status,
+            symmetrization_required_threshold_angstrom=(
+                symmetrization_required_threshold_angstrom
+            ),
+            cartesian_symmetrization_decision=cartesian_symmetrization_decision,
+            input_symmetry_max_deviation_angstrom=(
+                input_symmetry_max_deviation_angstrom
+            ),
+            proposed_point_group=proposed_point_group,
+        ),
     )
 
 
@@ -325,6 +540,15 @@ def write_topology_and_synthons_sections(
     ]
     if discrete.bonds:
         topology_lines.extend(f"{i + 1} {j + 1}" for i, j in discrete.bonds)
+    else:
+        topology_lines.append("NONE")
+    topology_lines.append("[TRANSITIONAL_CONTACTS]")
+    transitional_contacts = tuple(getattr(discrete, "transitional_contacts", ()))
+    if transitional_contacts:
+        topology_lines.extend(
+            f"{i + 1} {j + 1} KIND=WEAK_ACYCLIC"
+            for i, j in transitional_contacts
+        )
     else:
         topology_lines.append("NONE")
     topology_lines.append("[BOND_ORDERS]")
@@ -360,6 +584,14 @@ def write_topology_and_synthons_sections(
             topology_lines.append(f"{idx} SIZE={len(ring)} ATOMS={atoms}")
     else:
         topology_lines.append("NONE")
+    automorphism_orbits = build_topology_automorphism_orbits(
+        discrete,
+        ringset,
+        synthons,
+        atomic_numbers,
+        aromaticity=aromaticity,
+    )
+    topology_lines.extend(topology_automorphism_lines(automorphism_orbits))
     topology_lines.append("[AROMATICITY]")
     aromatic_atoms = sorted(getattr(aromaticity, "aromatic_atoms", set()))
     topology_lines.append(
@@ -367,6 +599,7 @@ def write_topology_and_synthons_sections(
         + (" ".join(str(atom + 1) for atom in aromatic_atoms) if aromatic_atoms else "NONE")
     )
     replace_section(Path(path), "TOPOLOGY", topology_lines)
+    replace_section(Path(path), "AROMATICITY", aromaticity_section_lines(aromaticity))
 
     synthon_lines = [
         f"SCHEMA {MATRIX_XYZ_SYNTHONS_SCHEMA}",
@@ -405,9 +638,12 @@ def _ring_basis_diagnostic_lines(ringset) -> list[str]:
         else "NONE"
     )
     return [
+        f"RING_BASIS_ALGORITHM {diagnostics.algorithm}",
+        f"RING_BASIS_COMPLETE {'YES' if diagnostics.complete else 'NO'}",
         f"RING_CANDIDATE_COUNT {diagnostics.candidate_cycle_count}",
         f"RING_BASIS_RANK {diagnostics.cycle_rank}",
         f"RING_BASIS_COUNT {diagnostics.selected_cycle_count}",
+        f"RING_BASIS_MAXIMUM_SIZE {diagnostics.maximum_selected_size}",
         f"RING_BASIS_ALLOWED_ATOMS {diagnostics.allowed_atom_count}",
         f"RING_BASIS_ALLOWED_EDGES {diagnostics.allowed_edge_count}",
         f"RING_BASIS_EXCLUDED_ATOMS {excluded}",

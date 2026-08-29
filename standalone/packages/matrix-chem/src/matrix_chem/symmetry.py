@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from itertools import permutations, product
 import re
+from typing import Sequence
 
 import numpy as np
 
+from .average_atomic_masses import atomic_mass
 from .geometry import MolecularGeometry
 from .topology.elements import atomic_number
 
 
 CARTESIAN_SYMMETRIZATION_NOOP_TOLERANCE_ANGSTROM = 5.0e-6
+QUASI_SYMMETRY_MAX_DISTANCE_TOLERANCE_ANGSTROM = 3.0e-2
 
 
 @dataclass(frozen=True)
@@ -39,12 +43,68 @@ class MolecularSymmetry:
     )
 
 
+def cartesian_operation_matrix(
+    rotation: np.ndarray | Sequence[Sequence[float]],
+    source_to_target_zero_based: Sequence[int],
+    *,
+    natoms: int | None = None,
+) -> np.ndarray:
+    """Return the shared Cartesian polar-vector operation matrix.
+
+    The mapping follows ORACLE's detector convention: source atom ``i`` maps
+    to target atom ``j`` such that ``x_i`` matches ``R x_j``.  All SMITH and
+    MORPHEUS symmetry projectors use this one block-matrix construction.
+    """
+
+    mapping = tuple(int(atom) for atom in source_to_target_zero_based)
+    atom_count = len(mapping) if natoms is None else int(natoms)
+    if atom_count < 0 or len(mapping) != atom_count:
+        raise ValueError("Cartesian symmetry mapping size does not match natoms")
+    if sorted(mapping) != list(range(atom_count)):
+        raise ValueError("Cartesian symmetry mapping must be a zero-based permutation")
+    matrix3 = np.asarray(rotation, dtype=float)
+    if matrix3.shape != (3, 3) or not np.all(np.isfinite(matrix3)):
+        raise ValueError("Cartesian symmetry rotation must be a finite 3-by-3 matrix")
+    matrix = np.zeros((3 * atom_count, 3 * atom_count), dtype=float)
+    for source_index, target_index in enumerate(mapping):
+        matrix[
+            3 * source_index : 3 * source_index + 3,
+            3 * target_index : 3 * target_index + 3,
+        ] = matrix3
+    return matrix
+
+
 @dataclass(frozen=True)
 class SymmetryProjectionDiagnostics:
     status: str
     max_displacement_angstrom: float
     rms_displacement_angstrom: float
     noop_tolerance_angstrom: float = CARTESIAN_SYMMETRIZATION_NOOP_TOLERANCE_ANGSTROM
+
+
+@dataclass(frozen=True)
+class QuasiSymmetryAnalysis:
+    """Strict and topology-qualified quasi-symmetry assignments.
+
+    A relaxed assignment is admissible only when every Cartesian operation
+    preserves the frozen primary graph and extends the operation permutations
+    already recognized at the strict threshold.  This prevents a larger
+    geometric matching tolerance from inventing connectivity or replacing an
+    established subgroup by an unrelated one.
+    """
+
+    strict_symmetry: MolecularSymmetry
+    proposed_symmetry: MolecularSymmetry
+    recognition_tolerance_angstrom: float
+    search_limit_angstrom: float
+    topology_validated: bool
+
+    @property
+    def promoted(self) -> bool:
+        return (
+            self.proposed_symmetry.point_group != self.strict_symmetry.point_group
+            or len(self.proposed_symmetry.operations) != len(self.strict_symmetry.operations)
+        )
 
 
 def symmetry_projection_diagnostics(
@@ -83,6 +143,7 @@ def symmetrize_molecular_geometry(
     symmetry: MolecularSymmetry,
     *,
     minimum_deviation_angstrom: float = CARTESIAN_SYMMETRIZATION_NOOP_TOLERANCE_ANGSTROM,
+    force_projection: bool = False,
 ) -> MolecularGeometry:
     """Return the exact group-average geometry for an assigned point group."""
     point_group = symmetry.point_group.strip().upper()
@@ -95,13 +156,13 @@ def symmetrize_molecular_geometry(
         # result depend on the platform-specific choice inside a nearly
         # degenerate inertia eigenspace (the historical spiro/D2 regression).
         return geometry
-    if symmetry.max_deviation <= float(minimum_deviation_angstrom):
+    if not force_projection and symmetry.max_deviation <= float(minimum_deviation_angstrom):
         # Do not turn few-microangstrom input/printing noise into a new
         # Cartesian reference.  Above this floor, accepted quasi-symmetry is
         # projected exactly by the complete finite-group average below.
         return geometry
     coords = np.asarray(geometry.coordinates_angstrom, dtype=float)
-    weights = np.array([atomic_number(symbol) or 1 for symbol in geometry.atoms], dtype=float)
+    weights = _molecular_masses(geometry.atoms)
     center = np.average(coords, axis=0, weights=weights)
     centered = coords - center
     projected = np.zeros_like(centered)
@@ -126,8 +187,216 @@ def symmetrize_molecular_geometry(
     )
 
 
+def symmetrize_cartesian_gradient(
+    gradient_hartree_per_bohr: np.ndarray,
+    symmetry: MolecularSymmetry,
+) -> np.ndarray:
+    """Project a Cartesian gradient onto the totally symmetric subspace.
+
+    The Cartesian gradient transforms as a polar vector under the molecular
+    symmetry operations. Group-averaging it at every QM point removes
+    numerical symmetry breaking before LINK transforms the gradient into
+    SONIC coordinates or updates its Hessian model.
+    """
+    original = np.asarray(gradient_hartree_per_bohr, dtype=float)
+    flattened = original.ndim == 1
+    if flattened:
+        if original.size % 3:
+            raise ValueError("flattened Cartesian gradients must have length 3N")
+        gradient = original.reshape((-1, 3))
+    else:
+        gradient = original
+    if gradient.ndim != 2 or gradient.shape[1] != 3:
+        raise ValueError("Cartesian gradients must have shape natoms x 3")
+    if not np.all(np.isfinite(gradient)):
+        raise ValueError("Cartesian gradient contains non-finite values")
+    point_group = symmetry.point_group.strip().upper()
+    if point_group in {"", "C1", "UNKNOWN"}:
+        return original.copy()
+    expected_order = _finite_point_group_order(point_group)
+    if expected_order is not None and len(symmetry.operations) != expected_order:
+        return original.copy()
+    projected = np.zeros_like(gradient)
+    for operation in symmetry.operations:
+        rotation = np.asarray(operation.rotation, dtype=float)
+        mapping = np.asarray([int(atom) - 1 for atom in operation.permutation], dtype=int)
+        if mapping.shape != (gradient.shape[0],):
+            raise ValueError("symmetry operation has incompatible atom mapping")
+        inverse_mapping = np.argsort(mapping)
+        projected += gradient[inverse_mapping] @ rotation
+    projected /= float(len(symmetry.operations))
+    return projected.reshape(-1) if flattened else projected
+
+
+def canonicalize_molecular_geometry_by_symmetry(
+    geometry: MolecularGeometry,
+    *,
+    distance_tolerance: float,
+    inertia_tolerance: float,
+    max_rotation_order: int,
+    coordinate_decimals: int = 10,
+    max_cycles: int = 4,
+    convergence_tolerance_angstrom: float = 1.0e-12,
+) -> tuple[MolecularGeometry, MolecularSymmetry, MolecularSymmetry]:
+    """Return the general ORACLE Cartesian symmetry projection.
+
+    The first symmetry object records the tolerance-based assignment made from
+    the centered, principal-axis geometry.  The second records the operations
+    of the final canonical geometry.  Reorienting and reprojecting removes the
+    small principal-axis drift introduced by a single group average, including
+    for symmetric tops whose perpendicular inertia axes are degenerate.
+    """
+
+    decimals = int(coordinate_decimals)
+    if decimals < 0:
+        raise ValueError("coordinate_decimals must be non-negative")
+    cycles = max(1, int(max_cycles))
+    current = orient_molecular_geometry_to_principal_axes(
+        geometry,
+        inertia_tolerance=float(inertia_tolerance),
+    )
+    assigned = analyze_molecular_symmetry(
+        current,
+        distance_tolerance=float(distance_tolerance),
+        inertia_tolerance=float(inertia_tolerance),
+        max_rotation_order=int(max_rotation_order),
+    )
+    point_group = assigned.point_group
+    final_symmetry = assigned
+    current_coordinates = np.asarray(current.coordinates_angstrom, dtype=float)
+    requires_axis_refinement = _has_degenerate_inertia(
+        current.atoms,
+        current_coordinates,
+        tolerance=float(inertia_tolerance),
+    ) and not _fully_degenerate_inertia(
+        current.atoms,
+        current_coordinates,
+        tolerance=float(inertia_tolerance),
+    )
+    refinement_cycles = cycles if requires_axis_refinement else 1
+    for _cycle in range(refinement_cycles):
+        projected = symmetrize_molecular_geometry(
+            current,
+            final_symmetry,
+            minimum_deviation_angstrom=CARTESIAN_SYMMETRIZATION_NOOP_TOLERANCE_ANGSTROM,
+        )
+        if not requires_axis_refinement:
+            current = projected
+            break
+        canonical = (
+            orient_molecular_geometry_to_principal_axes(
+                projected,
+                inertia_tolerance=float(inertia_tolerance),
+            )
+        )
+        refined = analyze_molecular_symmetry(
+            canonical,
+            distance_tolerance=float(distance_tolerance),
+            inertia_tolerance=float(inertia_tolerance),
+            max_rotation_order=int(max_rotation_order),
+        )
+        if refined.point_group != point_group:
+            # Never let numerical refinement change the tolerance-based group
+            # selected from the imported geometry.
+            current = projected
+            break
+        refined_geometry = symmetrize_molecular_geometry(
+            canonical,
+            refined,
+            minimum_deviation_angstrom=0.0,
+        )
+        displacement = np.linalg.norm(
+            refined_geometry.coordinates_angstrom - canonical.coordinates_angstrom,
+            axis=1,
+        )
+        current = refined_geometry
+        final_symmetry = refined
+        if (
+            float(np.max(displacement, initial=0.0))
+            <= float(convergence_tolerance_angstrom)
+            and refined.max_deviation <= float(convergence_tolerance_angstrom)
+        ):
+            break
+
+    rounded_coordinates = np.round(current.coordinates_angstrom, decimals=decimals)
+    rounded_coordinates[np.abs(rounded_coordinates) < 0.5 * 10.0 ** (-decimals)] = 0.0
+    rounded = MolecularGeometry(
+        atoms=current.atoms,
+        coordinates_angstrom=rounded_coordinates,
+        comment=current.comment,
+        source_format=current.source_format,
+        source_path=current.source_path,
+        charge=current.charge,
+        multiplicity=current.multiplicity,
+        fixed_parameters=current.fixed_parameters,
+        metadata={
+            **current.metadata,
+            "cartesian_symmetry_canonicalized": True,
+            "cartesian_coordinate_decimals": decimals,
+        },
+    )
+    final_symmetry = analyze_molecular_symmetry(
+        rounded,
+        distance_tolerance=float(distance_tolerance),
+        inertia_tolerance=float(inertia_tolerance),
+        max_rotation_order=int(max_rotation_order),
+    )
+    if final_symmetry.point_group != point_group:
+        raise ValueError(
+            "Cartesian coordinate serialization changed the assigned point group: "
+            f"{point_group} -> {final_symmetry.point_group}"
+        )
+    return rounded, assigned, final_symmetry
+
+
+def orient_molecular_geometry_to_principal_axes(
+    geometry: MolecularGeometry,
+    *,
+    inertia_tolerance: float = 1.0e-3,
+) -> MolecularGeometry:
+    """Center a molecular geometry at its mass centre and orient its principal axes.
+
+    This is the canonical Cartesian frame used by ORACLE before point-group
+    assignment.  The atom order and all non-Cartesian metadata are preserved.
+    """
+
+    coordinates, frame = orient_coords_with_frame(
+        geometry.coordinates_angstrom,
+        weights=_molecular_masses(geometry.atoms),
+        degeneracy_tolerance=float(inertia_tolerance),
+    )
+    coordinates[np.abs(coordinates) < 5.0e-13] = 0.0
+    return MolecularGeometry(
+        atoms=geometry.atoms,
+        coordinates_angstrom=coordinates,
+        comment=geometry.comment,
+        source_format=geometry.source_format,
+        source_path=geometry.source_path,
+        charge=geometry.charge,
+        multiplicity=geometry.multiplicity,
+        fixed_parameters=geometry.fixed_parameters,
+        metadata={
+            **geometry.metadata,
+            "cartesian_center": "CENTER_OF_MASS",
+            "cartesian_orientation": "PRINCIPAL_INERTIA_AXES",
+            "cartesian_orientation_frame": tuple(
+                tuple(float(value) for value in row) for row in frame
+            ),
+        },
+    )
+
+
+def _molecular_masses(symbols: tuple[str, ...] | list[str]) -> np.ndarray:
+    return np.asarray(
+        [atomic_mass(atomic_number(symbol) or 1) for symbol in symbols],
+        dtype=float,
+    )
+
+
 def _finite_point_group_order(point_group: str) -> int | None:
     label = point_group.strip().upper()
+    if label == "C1":
+        return 1
     if label == "CI" or label == "CS":
         return 2
     match = re.fullmatch(r"C(\d+)", label)
@@ -142,6 +411,9 @@ def _finite_point_group_order(point_group: str) -> int | None:
     match = re.fullmatch(r"D(\d+)[DH]", label)
     if match:
         return 4 * int(match.group(1))
+    match = re.fullmatch(r"S(\d+)", label)
+    if match and int(match.group(1)) % 2 == 0:
+        return int(match.group(1))
     if label == "T":
         return 12
     if label in {"TD", "TH"}:
@@ -157,6 +429,88 @@ def _finite_point_group_order(point_group: str) -> int | None:
     return None
 
 
+def dihedral_operation_label_from_matrix(
+    matrix: np.ndarray,
+    principal_order: int,
+) -> str | None:
+    """Return the canonical label of a proper ``D_n`` operation.
+
+    The matrix must be expressed in the principal-axis frame, with the
+    highest-order axis along ``z``.  This matrix-based classifier is shared by
+    ORACLE's complete-operation recovery and SMITH's character construction,
+    so operation labels cannot drift between molecular perception and SALC
+    generation.
+    """
+
+    n = int(principal_order)
+    arr = np.asarray(matrix, dtype=float)
+    if n < 2 or arr.shape != (3, 3):
+        return None
+    if not np.allclose(arr.T @ arr, np.eye(3), atol=1.0e-7):
+        return None
+    if float(np.linalg.det(arr)) < 0.0:
+        return None
+    if np.allclose(arr, np.eye(3), atol=1.0e-7):
+        return "E"
+    if not (
+        np.allclose(arr[2, :2], 0.0, atol=1.0e-7)
+        and np.allclose(arr[:2, 2], 0.0, atol=1.0e-7)
+    ):
+        return None
+    if arr[2, 2] > 0.0:
+        angle = np.arctan2(float(arr[1, 0]), float(arr[0, 0]))
+        power = int(round((angle % (2.0 * np.pi)) * n / (2.0 * np.pi))) % n
+        if power == 0:
+            return "E"
+        if n % 2 == 0 and power == n // 2:
+            return "C2z"
+        return f"C{n}z^{power}"
+    if abs(float(np.trace(arr)) + 1.0) > 1.0e-7:
+        return None
+    values, vectors = np.linalg.eig(arr)
+    axis_index = int(np.argmin(np.abs(values - 1.0)))
+    axis = np.real(vectors[:, axis_index])
+    if abs(float(axis[2])) > 1.0e-6:
+        return None
+    angle = np.arctan2(float(axis[1]), float(axis[0])) % np.pi
+    index = int(round(angle * n / np.pi)) % n
+    return f"C2_xy_{n}_{index}"
+
+
+def _finite_operation_set_is_closed(
+    elements: Sequence[tuple[str, np.ndarray, float]],
+    permutations: Sequence[tuple[int, ...]],
+) -> bool:
+    """Return whether stored matrices and atom maps form a finite group."""
+
+    if len(elements) != len(permutations) or not elements:
+        return False
+    records = tuple(
+        (tuple(int(atom) for atom in permutation), np.asarray(element[1], dtype=float))
+        for element, permutation in zip(elements, permutations)
+    )
+    keys = {
+        (
+            permutation,
+            tuple(round(float(value), 8) for value in matrix.reshape(-1)),
+        )
+        for permutation, matrix in records
+    }
+    for left_permutation, left_matrix in records:
+        for right_permutation, right_matrix in records:
+            product_permutation = tuple(
+                right_permutation[atom] for atom in left_permutation
+            )
+            product_matrix = left_matrix @ right_matrix
+            key = (
+                product_permutation,
+                tuple(round(float(value), 8) for value in product_matrix.reshape(-1)),
+            )
+            if key not in keys:
+                return False
+    return True
+
+
 def analyze_molecular_symmetry(
     geometry: MolecularGeometry,
     *,
@@ -165,6 +519,9 @@ def analyze_molecular_symmetry(
     max_rotation_order: int,
 ) -> MolecularSymmetry:
     symbols = list(geometry.atoms)
+    # Keep ORACLE's established symmetry-classification weights.  Cartesian
+    # centering/orientation is mass based, while point-set classification
+    # remains tied to the frozen ORACLE contract.
     weights = np.array([atomic_number(symbol) or 1 for symbol in symbols], dtype=float)
     coordinates = np.asarray(geometry.coordinates_angstrom, dtype=float)
     center = np.sum(coordinates * weights[:, None], axis=0) / max(
@@ -233,7 +590,25 @@ def analyze_molecular_symmetry(
         elements = [("E", np.eye(3), 0.0)]
         permutations = [tuple(range(len(symbols)))]
         atom_classes = tuple((idx,) for idx in range(len(symbols)))
-    point_group = group_label(elements, linear=is_linear(oriented, tol=distance_tolerance))
+    point_group = group_label(
+        elements,
+        linear=is_linear(oriented, tol=distance_tolerance),
+    )
+    final_expected_order = _finite_point_group_order(point_group)
+    if final_expected_order is not None and len(elements) != final_expected_order:
+        raise ValueError(
+            "incomplete finite point-group operation set: "
+            f"{point_group} requires {final_expected_order} operations, "
+            f"but ORACLE recovered {len(elements)}"
+        )
+    if final_expected_order is not None and not _finite_operation_set_is_closed(
+        elements,
+        permutations,
+    ):
+        raise ValueError(
+            "non-closed finite point-group operation set: "
+            f"ORACLE operations for {point_group} fail matrix/permutation closure"
+        )
     operations = tuple(
         SymmetryOperation(
             label=str(label),
@@ -261,11 +636,218 @@ def analyze_molecular_symmetry(
     )
 
 
+def analyze_molecular_quasisymmetry(
+    geometry: MolecularGeometry,
+    *,
+    distance_tolerance: float,
+    inertia_tolerance: float,
+    max_rotation_order: int,
+    topology_bonds: Sequence[tuple[int, int]] | None,
+    topology_edge_labels: Mapping[tuple[int, int], Hashable] | None = None,
+    maximum_distance_tolerance: float = (
+        QUASI_SYMMETRY_MAX_DISTANCE_TOLERANCE_ANGSTROM
+    ),
+) -> QuasiSymmetryAnalysis:
+    """Return the strict assignment and any topology-qualified larger group.
+
+    The relaxed search is deliberately bounded in Cartesian space.  It is not
+    a replacement for structural refinement: it only recognizes a nearby
+    exact-symmetry manifold when the complete point group is geometrically
+    recoverable and every atom permutation is an automorphism of ORACLE's
+    primary graph.  Without a primary graph, no relaxed promotion is made.
+    """
+
+    strict_tolerance = float(distance_tolerance)
+    if strict_tolerance <= 0.0:
+        raise ValueError("distance_tolerance must be positive")
+    # The configured maximum bounds only the additional relaxed search.  A
+    # caller may deliberately request a looser strict assignment (for example
+    # for a raw SMILES embedding); in that case there is no wider
+    # quasi-symmetry interval to inspect.
+    search_limit = max(strict_tolerance, float(maximum_distance_tolerance))
+    inertia_limit = float(inertia_tolerance)
+    rotation_order = int(max_rotation_order)
+    coordinate_array = np.asarray(geometry.coordinates_angstrom, dtype=float)
+    geometry_key = (
+        tuple(str(symbol) for symbol in geometry.atoms),
+        coordinate_array.shape,
+        coordinate_array.dtype.str,
+        coordinate_array.tobytes(),
+    )
+    analysis_cache: dict[tuple[object, ...], MolecularSymmetry] = {}
+
+    def analyze_at(tolerance: float) -> MolecularSymmetry:
+        key = (geometry_key, float(tolerance), inertia_limit, rotation_order)
+        cached = analysis_cache.get(key)
+        if cached is None:
+            cached = analyze_molecular_symmetry(
+                geometry,
+                distance_tolerance=float(tolerance),
+                inertia_tolerance=inertia_limit,
+                max_rotation_order=rotation_order,
+            )
+            analysis_cache[key] = cached
+        return cached
+
+    strict = analyze_at(strict_tolerance)
+    if topology_edge_labels is not None and topology_bonds is None:
+        raise ValueError("topology_edge_labels require topology_bonds")
+    natoms = len(geometry.atoms)
+    bonds = (
+        _canonical_topology_bonds(topology_bonds, natoms=natoms)
+        if topology_bonds is not None
+        else None
+    )
+    edge_labels = (
+        _canonical_topology_edge_labels(topology_edge_labels, topology_bonds=bonds)
+        if topology_edge_labels is not None and bonds is not None
+        else None
+    )
+    strict_topology_validated = bool(
+        bonds is not None
+        and _symmetry_operations_preserve_topology(
+            strict,
+            topology_bonds=bonds,
+            topology_edge_labels=edge_labels,
+            natoms=natoms,
+        )
+    )
+    unchanged = QuasiSymmetryAnalysis(
+        strict_symmetry=strict,
+        proposed_symmetry=strict,
+        recognition_tolerance_angstrom=strict_tolerance,
+        search_limit_angstrom=search_limit,
+        topology_validated=strict_topology_validated,
+    )
+    if bonds is None or not strict_topology_validated or search_limit <= strict_tolerance:
+        return unchanged
+
+    relaxed = analyze_at(search_limit)
+    if relaxed.point_group.strip().upper() in {"", "C1", "UNKNOWN"}:
+        return unchanged
+    if (
+        relaxed.point_group == strict.point_group
+        and len(relaxed.operations) == len(strict.operations)
+    ):
+        return unchanged
+
+    if not _symmetry_operations_preserve_topology(
+        relaxed,
+        topology_bonds=bonds,
+        topology_edge_labels=edge_labels,
+        natoms=natoms,
+    ):
+        return unchanged
+    strict_permutations = {
+        tuple(int(atom) for atom in operation.permutation)
+        for operation in strict.operations
+    }
+    relaxed_permutations = {
+        tuple(int(atom) for atom in operation.permutation)
+        for operation in relaxed.operations
+    }
+    if not strict_permutations.issubset(relaxed_permutations):
+        return unchanged
+
+    # Recover the smallest reproducible tolerance that contains the complete
+    # candidate group.  This value, rather than the search ceiling, is frozen
+    # in diagnostics and used for the exact Cartesian group projection.
+    recognition_tolerance = max(
+        strict_tolerance,
+        float(relaxed.max_deviation)
+        + max(1.0e-10, 1.0e-8 * float(relaxed.max_deviation)),
+    )
+    recognition_tolerance = min(recognition_tolerance, search_limit)
+    proposed = analyze_at(recognition_tolerance)
+    if (
+        proposed.point_group != relaxed.point_group
+        or len(proposed.operations) != len(relaxed.operations)
+    ):
+        proposed = relaxed
+        recognition_tolerance = search_limit
+    if not _symmetry_operations_preserve_topology(
+        proposed,
+        topology_bonds=bonds,
+        topology_edge_labels=edge_labels,
+        natoms=natoms,
+    ):
+        return unchanged
+    return QuasiSymmetryAnalysis(
+        strict_symmetry=strict,
+        proposed_symmetry=proposed,
+        recognition_tolerance_angstrom=recognition_tolerance,
+        search_limit_angstrom=search_limit,
+        topology_validated=True,
+    )
+
+
+def _canonical_topology_bonds(
+    topology_bonds: Sequence[tuple[int, int]],
+    *,
+    natoms: int,
+) -> frozenset[tuple[int, int]]:
+    output: set[tuple[int, int]] = set()
+    for raw_left, raw_right in topology_bonds:
+        left, right = int(raw_left), int(raw_right)
+        if left == right or min(left, right) < 0 or max(left, right) >= int(natoms):
+            raise ValueError("topology bond is outside the molecular atom range")
+        output.add(tuple(sorted((left, right))))
+    return frozenset(output)
+
+
+def _canonical_topology_edge_labels(
+    topology_edge_labels: Mapping[tuple[int, int], Hashable],
+    *,
+    topology_bonds: frozenset[tuple[int, int]],
+) -> dict[tuple[int, int], Hashable]:
+    output: dict[tuple[int, int], Hashable] = {}
+    for raw_pair, label in topology_edge_labels.items():
+        if len(raw_pair) != 2:
+            raise ValueError("topology edge-label key must contain two atom indices")
+        pair = tuple(sorted((int(raw_pair[0]), int(raw_pair[1]))))
+        if pair not in topology_bonds:
+            raise ValueError("topology edge label is assigned to a non-bonded atom pair")
+        output[pair] = label
+    if set(output) != set(topology_bonds):
+        raise ValueError("topology edge labels must cover every primary bond")
+    return output
+
+
+def _symmetry_operations_preserve_topology(
+    symmetry: MolecularSymmetry,
+    *,
+    topology_bonds: frozenset[tuple[int, int]],
+    topology_edge_labels: Mapping[tuple[int, int], Hashable] | None,
+    natoms: int,
+) -> bool:
+    for operation in symmetry.operations:
+        permutation = tuple(int(atom) - 1 for atom in operation.permutation)
+        if len(permutation) != natoms or tuple(sorted(permutation)) != tuple(range(natoms)):
+            return False
+        mapped = frozenset(
+            tuple(sorted((permutation[left], permutation[right])))
+            for left, right in topology_bonds
+        )
+        if mapped != topology_bonds:
+            return False
+        if topology_edge_labels is not None:
+            for pair, label in topology_edge_labels.items():
+                image = tuple(sorted((permutation[pair[0]], permutation[pair[1]])))
+                if topology_edge_labels.get(image) != label:
+                    return False
+    return True
+
+
 def symmetry_section_lines(
     symmetry: MolecularSymmetry,
     *,
     thresholds,
     projection: SymmetryProjectionDiagnostics | None = None,
+    cartesian_symmetry_status: str | None = None,
+    symmetrization_required_threshold_angstrom: float | None = None,
+    cartesian_symmetrization_decision: str | None = None,
+    input_symmetry_max_deviation_angstrom: float | None = None,
+    proposed_point_group: str | None = None,
 ) -> list[str]:
     lines = [
         "SCHEMA oracle.xyz.symmetry.v1",
@@ -289,6 +871,24 @@ def symmetry_section_lines(
                 f"{projection.noop_tolerance_angstrom:.12g}",
             )
         )
+    if cartesian_symmetry_status is not None:
+        lines.append(f"CARTESIAN_SYMMETRY_STATUS {cartesian_symmetry_status}")
+    if symmetrization_required_threshold_angstrom is not None:
+        lines.append(
+            "CARTESIAN_SYMMETRIZATION_REQUIRED_THRESHOLD_ANGSTROM "
+            f"{float(symmetrization_required_threshold_angstrom):.12g}"
+        )
+    if cartesian_symmetrization_decision is not None:
+        lines.append(
+            f"CARTESIAN_SYMMETRIZATION_DECISION {cartesian_symmetrization_decision}"
+        )
+    if input_symmetry_max_deviation_angstrom is not None:
+        lines.append(
+            "INPUT_MAX_OPERATION_DEVIATION_ANGSTROM "
+            f"{float(input_symmetry_max_deviation_angstrom):.12g}"
+        )
+    if proposed_point_group is not None:
+        lines.append(f"PROPOSED_POINT_GROUP {proposed_point_group}")
     lines.append("[OPERATIONS]")
     for idx, operation in enumerate(symmetry.operations, start=1):
         matrix = ",".join(f"{value:.12g}" for row in operation.rotation for value in row)
@@ -342,12 +942,25 @@ def orient_coords_with_frame(coords, weights=None, degeneracy_tolerance=1.0e-8):
     gap01 = abs(float(evals[0] - evals[1])) / scale
     gap12 = abs(float(evals[1] - evals[2])) / scale
     tolerance = float(degeneracy_tolerance)
-    if (gap01 <= tolerance) != (gap12 <= tolerance):
+    if gap01 <= tolerance and gap12 <= tolerance:
+        # A spherical top has no inertia-defined axes.  LAPACK is therefore
+        # free to return any orthonormal eigenbasis, and that arbitrary choice
+        # is observably different across architectures.  Build a covariant
+        # right-handed frame from the first ordered pair of centered atom
+        # vectors that fixes two independent directions instead.  Atom order
+        # is part of the molecular input contract, so this choice is stable
+        # without depending on floating-point tie breaking.
+        frame = _ordered_spherical_top_frame(x)
+    elif (gap01 <= tolerance) != (gap12 <= tolerance):
         # A symmetric top has one unique inertia axis and an arbitrary basis
         # in the perpendicular degenerate plane.  Anchor that plane to an atom
         # vector, making the frame covariant under rigid rotations.
         unique_index = 2 if gap01 <= tolerance else 0
         axis = np.asarray(frame[:, unique_index], dtype=float)
+        axial_projections = x @ axis
+        axial_nonzero = np.flatnonzero(np.abs(axial_projections) > 1.0e-12)
+        if len(axial_nonzero) and axial_projections[int(axial_nonzero[0])] < 0.0:
+            axis *= -1.0
         projections = x - np.outer(x @ axis, axis)
         norms = np.linalg.norm(projections, axis=1)
         nonzero = np.flatnonzero(norms > 1.0e-12)
@@ -380,6 +993,36 @@ def orient_coords_with_frame(coords, weights=None, degeneracy_tolerance=1.0e-8):
     return x @ frame, frame
 
 
+def _ordered_spherical_top_frame(points: np.ndarray) -> np.ndarray:
+    """Return a rigid-covariant frame for a fully degenerate point set."""
+    x = np.asarray(points, dtype=float)
+    radii = np.linalg.norm(x, axis=1)
+    scale = max(float(np.max(radii, initial=0.0)), 1.0)
+    threshold = 1.0e-12 * scale
+    for first in range(len(x)):
+        for second in range(first + 1, len(x)):
+            difference = x[first] - x[second]
+            difference_norm = float(np.linalg.norm(difference))
+            if difference_norm <= threshold:
+                continue
+            ex = difference / difference_norm
+            bisector = -(x[first] + x[second])
+            bisector -= float(np.dot(bisector, ex)) * ex
+            bisector_norm = float(np.linalg.norm(bisector))
+            if bisector_norm <= threshold:
+                continue
+            ez = bisector / bisector_norm
+            ey = np.cross(ez, ex)
+            ey_norm = float(np.linalg.norm(ey))
+            if ey_norm <= threshold:
+                continue
+            ey /= ey_norm
+            ez = np.cross(ex, ey)
+            ez /= max(float(np.linalg.norm(ez)), threshold)
+            return np.column_stack((ex, ey, ez))
+    raise ValueError("fully degenerate molecular geometry does not define an ordered 3D frame")
+
+
 def is_linear(coords, tol=1.0e-3):
     x = np.array(coords, dtype=float)
     inertia = np.zeros((3, 3), dtype=float)
@@ -400,6 +1043,10 @@ def symmetry_elements_from_geometry(
 ):
     coords = np.asarray(coords_oriented, dtype=float)
     fully_degenerate = _fully_degenerate_inertia(symbols, coords, tolerance=inertia_tol)
+    partly_degenerate = (
+        not fully_degenerate
+        and _has_degenerate_inertia(symbols, coords, tolerance=inertia_tol)
+    )
     elements, atom_classes, permutations = _symmetry_elements_in_frame(
         symbols,
         coords,
@@ -435,6 +1082,49 @@ def symmetry_elements_from_geometry(
             )
             atom_classes = aligned_classes
             permutations = aligned_permutations
+    if partly_degenerate:
+        direct = _symmetry_elements_from_point_set(
+            symbols,
+            coords,
+            tol=tol,
+            tol_H=tol_H,
+            ignore_isotopes=ignore_isotopes,
+        )
+        # The unique axis of a symmetric top is inertia-defined, but the
+        # perpendicular plane is not.  Enumerate the point-set operations once
+        # and use an actual perpendicular C2 axis or vertical mirror normal to
+        # fix that plane.  Re-running the established operation catalogue in
+        # this symmetry-aligned frame preserves all historical labels while
+        # recovering the complete Cnv/Dn/Dnh/Dnd operation set for an
+        # arbitrary rigid orientation.
+        if len(direct[0]) > len(elements):
+            alignment = _axial_degenerate_alignment_from_operations(direct[0])
+            if alignment is not None:
+                aligned_elements, aligned_classes, aligned_permutations = (
+                    _symmetry_elements_in_frame(
+                        symbols,
+                        coords @ alignment,
+                        tol=tol,
+                        max_n=max_n,
+                        tol_H=tol_H,
+                        ignore_isotopes=ignore_isotopes,
+                        auto_max_n=auto_max_n,
+                        inertia_tol=inertia_tol,
+                    )
+                )
+                if len(aligned_elements) >= len(direct[0]):
+                    elements = tuple(
+                        (
+                            label,
+                            alignment
+                            @ np.asarray(rotation, dtype=float)
+                            @ alignment.T,
+                            max_deviation,
+                        )
+                        for label, rotation, max_deviation in aligned_elements
+                    )
+                    atom_classes = aligned_classes
+                    permutations = aligned_permutations
     if fully_degenerate:
         direct = _symmetry_elements_from_point_set(
             symbols,
@@ -448,8 +1138,181 @@ def symmetry_elements_from_geometry(
         # platform-dependent eigenbasis cannot select a different, but equally
         # complete, operation contract.
         if len(direct[0]) >= len(elements):
-            return direct
-    return elements, atom_classes, permutations
+            elements, atom_classes, permutations = direct
+    # Linear molecules represent Cinfv/Dinfh with a finite diagnostic sample
+    # of axial operations.  That sample is intentionally not a finite group:
+    # closing products of different sampled rotations would generate an
+    # unbounded catalogue and is neither required nor mathematically valid.
+    if is_linear(coords, tol=tol):
+        return elements, _atom_classes(len(symbols), permutations), permutations
+    elements, permutations = _complete_verified_operation_set(
+        symbols,
+        coords,
+        elements,
+        permutations,
+        tol=tol,
+        tol_H=tol_H,
+        max_n=max_n,
+        ignore_isotopes=ignore_isotopes,
+    )
+    return elements, _atom_classes(len(symbols), permutations), permutations
+
+
+def _complete_verified_operation_set(
+    symbols,
+    coordinates: np.ndarray,
+    elements: Sequence[tuple[str, np.ndarray, float]],
+    permutations: Sequence[tuple[int, ...]],
+    *,
+    tol: float,
+    tol_H: float | None,
+    max_n: int,
+    ignore_isotopes: bool,
+) -> tuple[tuple[tuple[str, np.ndarray, float], ...], tuple[tuple[int, ...], ...]]:
+    """Close accepted generators, retaining only products verified on atoms."""
+
+    if len(elements) != len(permutations) or not elements:
+        return tuple(elements), tuple(permutations)
+    records = [
+        (
+            str(element[0]),
+            np.asarray(element[1], dtype=float),
+            float(element[2]),
+            tuple(int(atom) for atom in permutation),
+        )
+        for element, permutation in zip(elements, permutations)
+    ]
+    points = np.asarray(coordinates, dtype=float)
+    symbol_keys = tuple(
+        _symmetry_symbol_key(symbol, ignore_isotopes=ignore_isotopes) for symbol in symbols
+    )
+    catalogue = candidate_ops(max_n=max_n)
+
+    def known(matrix: np.ndarray, permutation: tuple[int, ...]) -> bool:
+        return any(
+            permutation == existing_permutation
+            and np.allclose(matrix, existing_matrix, atol=1.0e-8)
+            for _label, existing_matrix, _deviation, existing_permutation in records
+        )
+
+    while True:
+        added = False
+        snapshot = tuple(records)
+        for _left_label, left_matrix, left_deviation, left_permutation in snapshot:
+            for _right_label, right_matrix, right_deviation, right_permutation in snapshot:
+                product_matrix = left_matrix @ right_matrix
+                product_permutation = tuple(
+                    right_permutation[atom] for atom in left_permutation
+                )
+                if known(product_matrix, product_permutation):
+                    continue
+                transformed = points[np.asarray(product_permutation, dtype=int)] @ product_matrix.T
+                deviations = np.linalg.norm(transformed - points, axis=1)
+                # For a quasi-symmetric input, the residual of a product is
+                # bounded by the sum of the two accepted operation residuals.
+                # Permit that mathematically required accumulation, but never
+                # widen the original per-atom tolerance by more than a factor
+                # of two.  Exact geometries therefore retain the exact gate.
+                composition_bound = float(left_deviation + right_deviation) + 1.0e-10
+                accepted = all(
+                    float(deviation)
+                    <= min(
+                        composition_bound,
+                        2.0
+                        * (
+                            tol_H
+                            if tol_H is not None and symbol_keys[index] in {"H", "Z1"}
+                            else tol
+                        ),
+                    )
+                    for index, deviation in enumerate(deviations)
+                )
+                if not accepted:
+                    continue
+                label = next(
+                    (
+                        candidate_label
+                        for candidate_label, candidate_matrix in catalogue
+                        if np.allclose(product_matrix, candidate_matrix, atol=1.0e-8)
+                    ),
+                    None,
+                )
+                if label is None:
+                    # Products remain valid symmetry operations when the
+                    # molecular principal frame is not one of the finite
+                    # axis-aligned catalogue frames.  Preserve the exact
+                    # verified matrix and give it an orientation-independent
+                    # class label; downstream character construction also
+                    # receives the matrix, so no physical information is
+                    # inferred from this fallback name.
+                    base_label = _automatic_operation_label(product_matrix)
+                    existing_labels = {record[0] for record in records}
+                    label = base_label
+                    suffix = 1
+                    while label in existing_labels:
+                        suffix += 1
+                        label = f"{base_label}_{suffix}"
+                records.append(
+                    (
+                        str(label),
+                        product_matrix,
+                        float(np.max(deviations, initial=0.0)),
+                        product_permutation,
+                    )
+                )
+                added = True
+                if len(records) > 120:
+                    raise ValueError("finite point-group closure exceeded order 120")
+        if not added:
+            break
+    return (
+        tuple((label, matrix, deviation) for label, matrix, deviation, _mapping in records),
+        tuple(mapping for _label, _matrix, _deviation, mapping in records),
+    )
+
+
+def _axial_degenerate_alignment_from_operations(
+    elements: Sequence[tuple[str, np.ndarray, float]],
+) -> np.ndarray | None:
+    """Align a symmetric top's free plane to one of its exact operations."""
+
+    z_axis = np.asarray((0.0, 0.0, 1.0), dtype=float)
+    in_plane: np.ndarray | None = None
+    for _label, matrix, _deviation in elements:
+        arr = np.asarray(matrix, dtype=float)
+        if float(np.linalg.det(arr)) <= 0.0 or abs(float(np.trace(arr)) + 1.0) > 1.0e-7:
+            continue
+        values, vectors = np.linalg.eig(arr)
+        axis = np.real(vectors[:, int(np.argmin(np.abs(values - 1.0)))])
+        norm = float(np.linalg.norm(axis))
+        if norm > 1.0e-12 and abs(float(axis @ z_axis)) <= 1.0e-6:
+            in_plane = axis / norm
+            break
+    if in_plane is None:
+        for _label, matrix, _deviation in elements:
+            arr = np.asarray(matrix, dtype=float)
+            if float(np.linalg.det(arr)) >= 0.0 or abs(float(np.trace(arr)) - 1.0) > 1.0e-7:
+                continue
+            values, vectors = np.linalg.eig(arr)
+            normal = np.real(vectors[:, int(np.argmin(np.abs(values + 1.0)))])
+            norm = float(np.linalg.norm(normal))
+            if norm > 1.0e-12 and abs(float(normal @ z_axis)) <= 1.0e-6:
+                in_plane = normal / norm
+                break
+    if in_plane is None:
+        return None
+    in_plane = in_plane.copy()
+    in_plane[2] = 0.0
+    norm = float(np.linalg.norm(in_plane))
+    if norm <= 1.0e-12:
+        return None
+    in_plane /= norm
+    nonzero = np.flatnonzero(np.abs(in_plane) > 1.0e-12)
+    if len(nonzero) and in_plane[int(nonzero[0])] < 0.0:
+        in_plane *= -1.0
+    second = np.cross(z_axis, in_plane)
+    second /= max(float(np.linalg.norm(second)), 1.0e-12)
+    return np.column_stack((in_plane, second, z_axis))
 
 
 def _fully_degenerate_inertia(symbols, coords: np.ndarray, *, tolerance: float) -> bool:
@@ -530,12 +1393,13 @@ def _symmetry_elements_from_point_set(
     operations: list[tuple[str, np.ndarray, float]] = []
     mappings: list[tuple[int, ...]] = []
     seen: set[tuple[float, ...]] = set()
-    for target_indices in product(*candidates):
-        if len(set(target_indices)) != 3:
-            continue
+    for target_indices in _gram_compatible_target_triples(
+        points,
+        candidates,
+        gram=gram,
+        tolerance=gram_tolerance,
+    ):
         target = points[list(target_indices)]
-        if not np.allclose(target @ target.T, gram, atol=gram_tolerance, rtol=0.0):
-            continue
         row_action = np.linalg.solve(source, target)
         rotation = row_action.T
         if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1.0e-8, rtol=0.0):
@@ -578,24 +1442,91 @@ def _symmetry_elements_from_point_set(
     )
 
 
+def _gram_compatible_target_triples(
+    points: np.ndarray,
+    candidates: Sequence[Sequence[int]],
+    *,
+    gram: np.ndarray,
+    tolerance: float,
+    batch_size: int = 262_144,
+):
+    """Yield Gram-compatible triples in ``itertools.product`` order.
+
+    Spherical tops can have tens of thousands to millions of element/radius
+    compatible image triples.  The former scalar loop entered ``np.allclose``
+    once per triple.  Here each bounded batch is screened by compiled NumPy
+    kernels while preserving exactly the original lexicographic candidate
+    order.  Keeping the batches bounded avoids a cubic temporary-memory peak
+    for larger point sets.
+    """
+
+    if len(candidates) != 3:
+        return
+    first, second, third = (
+        np.asarray(candidate, dtype=np.intp) for candidate in candidates
+    )
+    second_third = int(len(second) * len(third))
+    total = int(len(first) * second_third)
+    if total == 0:
+        return
+    points_array = np.asarray(points, dtype=float)
+    gram_array = np.asarray(gram, dtype=float)
+    chunk = max(1, int(batch_size))
+    for start in range(0, total, chunk):
+        flat = np.arange(start, min(start + chunk, total), dtype=np.intp)
+        first_position = flat // second_third
+        remainder = flat - first_position * second_third
+        second_position = remainder // len(third)
+        third_position = remainder - second_position * len(third)
+        triples = np.column_stack(
+            (
+                first[first_position],
+                second[second_position],
+                third[third_position],
+            )
+        )
+        distinct = (
+            (triples[:, 0] != triples[:, 1])
+            & (triples[:, 0] != triples[:, 2])
+            & (triples[:, 1] != triples[:, 2])
+        )
+        if not np.any(distinct):
+            continue
+        triples = triples[distinct]
+        target = points_array[triples]
+        target_gram = target @ np.swapaxes(target, 1, 2)
+        compatible = np.all(
+            np.abs(target_gram - gram_array) <= float(tolerance),
+            axis=(1, 2),
+        )
+        for triple in triples[compatible]:
+            yield tuple(int(index) for index in triple)
+
+
 def _independent_point_triple(points: np.ndarray) -> tuple[int, int, int] | None:
-    radii = np.linalg.norm(points, axis=1)
-    first = int(np.argmax(radii))
-    cross_norms = np.linalg.norm(np.cross(points[first], points), axis=1)
-    second = int(np.argmax(cross_norms))
-    if cross_norms[second] <= 1.0e-10:
-        return None
-    determinants = np.abs(points @ np.cross(points[first], points[second]))
-    third = int(np.argmax(determinants))
-    if determinants[third] <= 1.0e-10:
-        return None
-    return first, second, third
+    x = np.asarray(points, dtype=float)
+    scale = max(float(np.max(np.linalg.norm(x, axis=1), initial=0.0)), 1.0)
+    vector_threshold = 1.0e-12 * scale
+    area_threshold = 1.0e-12 * scale * scale
+    volume_threshold = 1.0e-12 * scale * scale * scale
+    for first in range(len(x)):
+        if float(np.linalg.norm(x[first])) <= vector_threshold:
+            continue
+        for second in range(first + 1, len(x)):
+            normal = np.cross(x[first], x[second])
+            if float(np.linalg.norm(normal)) <= area_threshold:
+                continue
+            for third in range(second + 1, len(x)):
+                if abs(float(np.dot(x[third], normal))) > volume_threshold:
+                    return first, second, third
+    return None
 
 
-def _automatic_operation_sort_key(matrix: np.ndarray) -> tuple[int, float, tuple[float, ...]]:
+def _automatic_operation_sort_key(matrix: np.ndarray) -> tuple[int, int, tuple[float, ...]]:
     arr = np.asarray(matrix, dtype=float)
     identity_rank = 0 if np.allclose(arr, np.eye(3), atol=1.0e-8) else 1
-    return identity_rank, -float(np.linalg.det(arr)), tuple(np.round(arr.reshape(-1), 10))
+    determinant_rank = 0 if float(np.linalg.det(arr)) > 0.0 else 1
+    return identity_rank, determinant_rank, tuple(np.round(arr.reshape(-1), 10))
 
 
 def _automatic_operation_label(matrix: np.ndarray) -> str:
@@ -688,17 +1619,30 @@ def group_label(elements, linear=False):
     polyhedral = _polyhedral_group_label(elements)
     if polyhedral:
         return polyhedral
+    improper_rotation = _pure_improper_rotation_group_label(elements)
+    if improper_rotation:
+        return improper_rotation
+    order_two = _order_two_point_group_label(elements)
+    if order_two:
+        return order_two
     nmax, axis = _highest_cn_axis(labels)
     has_i = "i" in labels
     has_sigma = any(label.startswith("sigma") for label in labels)
-    has_c2 = any(label.startswith("C2") for label in labels)
     if linear:
         return "Dinfh" if has_i else "Cinfv"
     if nmax >= 2:
+        c2_axes = {
+            match.group(1)
+            for label in labels
+            if (match := re.match(r"C2([xyz])\^", str(label))) is not None
+        }
+        has_c2_perp = any(c2_axis != axis for c2_axis in c2_axes)
+        if axis == "z" and any(str(label).startswith("C2_xy") for label in labels):
+            has_c2_perp = True
         sigma_h = {"x": "sigma_yz", "y": "sigma_xz", "z": "sigma_xy"}.get(axis or "z")
         has_sigma_h = sigma_h in labels
         has_sigma_v = has_sigma and not has_sigma_h
-        if has_sigma_h and has_c2:
+        if has_sigma_h and has_c2_perp:
             return f"D{nmax}h"
         if has_sigma_h:
             return f"C{nmax}h"
@@ -711,7 +1655,7 @@ def group_label(elements, linear=False):
             return f"D{dnd_n}d"
         if has_sigma_v:
             return f"C{nmax}v"
-        if has_c2:
+        if has_c2_perp:
             return f"D{nmax}"
         return f"C{nmax}"
     if has_i:
@@ -719,6 +1663,80 @@ def group_label(elements, linear=False):
     if has_sigma:
         return "Cs"
     return "C1"
+
+
+def _order_two_point_group_label(elements) -> str | None:
+    """Classify a complete order-two point group from its matrices.
+
+    An arbitrary Cartesian frame need not give the nonidentity operation one
+    of the axis-aligned catalogue labels consumed by the historical parser.
+    Matrix invariants distinguish all three order-two molecular point groups
+    without introducing a frame convention: a proper pi rotation is ``C2``,
+    inversion is ``Ci``, and a plane reflection is ``Cs``.
+    """
+
+    if len(elements) != 2:
+        return None
+    matrices = tuple(np.asarray(item[1], dtype=float) for item in elements)
+    identity_indices = tuple(
+        index
+        for index, matrix in enumerate(matrices)
+        if np.allclose(matrix, np.eye(3), atol=1.0e-8)
+    )
+    if len(identity_indices) != 1:
+        return None
+    operation = matrices[1 - identity_indices[0]]
+    if not np.allclose(operation.T @ operation, np.eye(3), atol=1.0e-8):
+        return None
+    if not np.allclose(operation @ operation, np.eye(3), atol=1.0e-8):
+        return None
+    determinant = float(np.linalg.det(operation))
+    trace = float(np.trace(operation))
+    if determinant > 0.0 and abs(trace + 1.0) <= 1.0e-8:
+        return "C2"
+    if determinant < 0.0:
+        if np.allclose(operation, -np.eye(3), atol=1.0e-8):
+            return "Ci"
+        if abs(trace - 1.0) <= 1.0e-8:
+            return "Cs"
+    return None
+
+
+def _pure_improper_rotation_group_label(elements) -> str | None:
+    """Identify a finite ``S_2n`` group from its complete matrix set."""
+
+    matrices = tuple(np.asarray(item[1], dtype=float) for item in elements)
+    group_order = len(matrices)
+    if group_order < 4 or group_order % 2:
+        return None
+    improper = tuple(matrix for matrix in matrices if float(np.linalg.det(matrix)) < 0.0)
+    if len(improper) != group_order // 2:
+        return None
+    # Cnh and Dnd contain genuine mirror planes; a pure improper-rotation
+    # group does not.  This separates isomorphic cyclic groups such as C3h
+    # and S6 by their actual Cartesian operation sets.
+    if any(abs(float(np.trace(matrix)) - 1.0) <= 1.0e-8 for matrix in improper):
+        return None
+    keys = {
+        tuple(round(float(value), 8) for value in matrix.reshape(-1))
+        for matrix in matrices
+    }
+    identity = np.eye(3)
+    for generator in improper:
+        powers: list[np.ndarray] = []
+        current = identity.copy()
+        for _power in range(group_order):
+            powers.append(current.copy())
+            current = current @ generator
+        if not np.allclose(current, identity, atol=1.0e-8):
+            continue
+        generated = {
+            tuple(round(float(value), 8) for value in matrix.reshape(-1))
+            for matrix in powers
+        }
+        if len(generated) == group_order and generated == keys:
+            return f"S{group_order}"
+    return None
 
 
 def _match_with_map(symbols, coords1, coords2, tol, tol_H=None):
@@ -796,6 +1814,19 @@ def _highest_cn_axis(labels):
 
 def _polyhedral_group_label(elements) -> str | None:
     matrices = [np.asarray(item[1], dtype=float) for item in elements]
+    proper_matrices = tuple(matrix for matrix in matrices if float(np.linalg.det(matrix)) > 0.0)
+    has_inversion = any(np.allclose(matrix, -np.eye(3), atol=1.0e-8) for matrix in matrices)
+    tetrahedral_proper_classes = Counter(
+        operation_class
+        for operation_class in (_td_candidate_class(matrix) for matrix in proper_matrices)
+        if operation_class is not None
+    )
+    tetrahedral_proper = Counter({"E": 1, "C3": 8, "C2": 3})
+    if tetrahedral_proper_classes == tetrahedral_proper:
+        if len(matrices) == 12:
+            return "T"
+        if len(matrices) == 24 and has_inversion:
+            return "Th"
     td_classes = Counter(
         operation_class
         for operation_class in (_td_candidate_class(matrix) for matrix in matrices)
@@ -829,6 +1860,15 @@ def _polyhedral_group_label(elements) -> str | None:
         }
     ):
         return "Oh"
+    if invariant_oh_classes == Counter(
+        {
+            "E": 1,
+            "C3": 8,
+            "C4": 6,
+            "C2": 9,
+        }
+    ):
+        return "O"
     oh_classes = Counter(
         operation_class
         for operation_class in (_polyhedral_matrix_class(matrix) for matrix in matrices)

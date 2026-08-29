@@ -19,6 +19,7 @@ from .structural_corrections import (
     perceive_hydrogen_bonds,
     pl1_hbond_delta_angstrom,
 )
+from .pl1_model import PL1GaussianModel
 
 
 class ValenceLevel(str, Enum):
@@ -33,6 +34,28 @@ class RefinementLayer(str, Enum):
     CORE_VALENCE = "CORE_VALENCE"
     BL1_CONJUGATION = "BL1_CONJUGATION"
     PL1_SELECTED_PAIR = "PL1_SELECTED_PAIR"
+
+
+# Continuous pi character at and above this value belongs to the BL1
+# conjugated-bond domain.  The value deliberately includes aromatic C--C
+# bonds, whose geometry-only Pauling pi components are about 0.4--0.5, while
+# excluding ordinary single bonds.
+BL1_CONJUGATION_PI_THRESHOLD = 0.40
+BL1_CONJUGATED_ELEMENT_PAIRS = frozenset({(6, 6), (6, 16)})
+
+# Provisional class-balanced residual inferred from the independent saccharin
+# PL2 structure.  The original BL1 reference set did not represent polar
+# S--O/S--N environments adequately.  One shared contraction avoids fitting
+# two independent one-example parameters; external sulfur compounds are
+# required before this value can be promoted to a transferable calibration.
+BL1_POLAR_SULFUR_PAIRS = frozenset({(7, 16), (8, 16)})
+BL1_POLAR_SULFUR_RESIDUAL_ANGSTROM = -0.003310
+
+# The current CV posterior is valence-method independent.  For an L1 DPCS3
+# baseline, retain the small C--H enhancement of the original DPCS3-optimized
+# implementation as a separate, explicit BL1 residual rather than folding it
+# into the transversal CV layer.
+BL1_DPCS3_CH_RESIDUAL_ANGSTROM = -0.000870
 
 
 @dataclass(frozen=True)
@@ -119,6 +142,7 @@ def build_accuracy_ladder_plan(
     include_pl1_hydrogen_bonds: bool = False,
     cv_weight_threshold: float = 0.9,
     l1_targets: Iterable[PrimitiveTarget] = (),
+    pl1_model: PL1GaussianModel | None = None,
 ) -> AccuracyLadderPlan:
     """Build an ORACLE correction plan without mixing CV and valence layers."""
     level = valence_level if isinstance(valence_level, ValenceLevel) else ValenceLevel(str(valence_level).upper())
@@ -165,6 +189,7 @@ def build_accuracy_ladder_plan(
                 synthons,
                 include_conjugation=include_bl1_conjugation,
                 include_hydrogen_bonds=include_pl1_hydrogen_bonds,
+                pl1_model=pl1_model,
             )
         )
     targets.extend(tuple(l1_targets))
@@ -179,6 +204,7 @@ def build_l1_refinement_targets(
     *,
     include_conjugation: bool = True,
     include_hydrogen_bonds: bool = True,
+    pl1_model: PL1GaussianModel | None = None,
 ) -> tuple[PrimitiveTarget, ...]:
     """Build the JCP_IS1 BL1/PL1 targets on ORACLE primitives."""
     xyz = np.asarray(coordinates_angstrom, dtype=float)
@@ -194,16 +220,24 @@ def build_l1_refinement_targets(
             if primitive.kind != "bond":
                 continue
             left, right = primitive.atoms
-            if tuple(sorted((numbers[left], numbers[right]))) not in {(6, 6), (6, 16)}:
-                continue
-            if float(synthons.bond_order_total_pi(left, right)) < 0.50:
-                continue
             distance = float(np.linalg.norm(xyz[left] - xyz[right]))
+            if pl1_model is not None:
+                bond_order = max(1.0, min(3.0, float(synthons.bond_order(left, right))))
+                delta = pl1_model.covalent_delta(numbers[left], numbers[right], bond_order, distance)
+                if delta == 0.0:
+                    continue
+                targets.append(PrimitiveTarget(index, delta, RefinementLayer.BL1_CONJUGATION, "PL1_FITTED_COVALENT_GAUSSIAN"))
+                continue
+            if tuple(sorted((numbers[left], numbers[right]))) not in BL1_CONJUGATED_ELEMENT_PAIRS:
+                continue
+            if float(synthons.bond_order_total_pi(left, right)) < BL1_CONJUGATION_PI_THRESHOLD:
+                continue
+            from .topology.pykko_radii import bond_order_reference_radii
+            rl = bond_order_reference_radii(numbers[left], fallback_radius=0.0)
+            rr = bond_order_reference_radii(numbers[right], fallback_radius=0.0)
+            double_ref = rl[1] + rr[1]
             delta_cv = core_valence_bond_shift(
-                numbers[left],
-                numbers[right],
-                distance,
-                weight_threshold=0.0,
+                numbers[left], numbers[right], double_ref, weight_threshold=0.0
             )
             delta = _conjugation_delta_angstrom(
                 numbers[left], numbers[right], distance, delta_cv
@@ -217,12 +251,27 @@ def build_l1_refinement_targets(
                         "JCP_IS1_COVALENT_GAUSSIAN_CONJUGATION",
                     )
                 )
+        if pl1_model is None:
+            for index, primitive in enumerate(primitives):
+                if primitive.kind != "bond":
+                    continue
+                left, right = primitive.atoms
+                if tuple(sorted((numbers[left], numbers[right]))) not in BL1_POLAR_SULFUR_PAIRS:
+                    continue
+                targets.append(PrimitiveTarget(index, BL1_POLAR_SULFUR_RESIDUAL_ANGSTROM, RefinementLayer.BL1_CONJUGATION, "ORACLE_PROVISIONAL_POLAR_SULFUR_RESIDUAL"))
+            for index, primitive in enumerate(primitives):
+                if primitive.kind != "bond":
+                    continue
+                left, right = primitive.atoms
+                if tuple(sorted((numbers[left], numbers[right]))) != (1, 6):
+                    continue
+                targets.append(PrimitiveTarget(index, BL1_DPCS3_CH_RESIDUAL_ANGSTROM, RefinementLayer.BL1_CONJUGATION, "ORACLE_DPCS3_CH_COMPENSATION"))
     if include_hydrogen_bonds:
         bonded_pairs = tuple(
             primitive.atoms for primitive in primitives if primitive.kind == "bond"
         )
         for contact in perceive_hydrogen_bonds(numbers, xyz, bonded_pairs):
-            if not contact.pl1_calibrated:
+            if pl1_model is None and not contact.pl1_calibrated:
                 continue
             index = primitive_by_pair.get(tuple(sorted((contact.hydrogen, contact.acceptor))))
             if index is None:
@@ -230,9 +279,12 @@ def build_l1_refinement_targets(
             targets.append(
                 PrimitiveTarget(
                     index,
-                    pl1_hbond_delta_angstrom(
+                    (pl1_model.hbond_delta(
+                        numbers[contact.donor], numbers[contact.acceptor],
                         contact.distance_angstrom, contact.angle_radians
-                    ),
+                    ) if pl1_model is not None else pl1_hbond_delta_angstrom(
+                        contact.distance_angstrom, contact.angle_radians
+                    )),
                     RefinementLayer.PL1_SELECTED_PAIR,
                     "JCP_IS1_PL1_OH_OH_GAUSSIAN",
                 )
@@ -268,8 +320,17 @@ def backtransform_primitive_targets(
     max_iterations: int = 50,
     damping: float = 1.0e-10,
     maximum_cartesian_step: float = 0.15,
+    allow_least_squares_projection: bool = False,
+    cartesian_step_tolerance: float = 1.0e-10,
+    objective_tolerance: float = 1.0e-12,
 ) -> BackTransformationResult:
-    """Iteratively reconstruct Cartesians from selected primitive targets."""
+    """Iteratively reconstruct Cartesians from selected primitive targets.
+
+    ``allow_least_squares_projection`` is reserved for redundant target sets
+    which need not be mutually realizable. In that mode a backtracked weighted
+    Wilson-B step may converge to the stationary least-squares projection;
+    the non-zero target residual remains explicitly reported.
+    """
     xyz = np.asarray(coordinates_angstrom, dtype=float).copy()
     selected = np.asarray(sorted(int(index) for index in targets), dtype=int)
     if selected.size == 0:
@@ -321,7 +382,48 @@ def backtransform_primitive_targets(
         step_norm = float(np.linalg.norm(step))
         if step_norm > maximum_cartesian_step:
             step *= maximum_cartesian_step / step_norm
-        xyz += step.reshape(xyz.shape)
+        if not allow_least_squares_projection:
+            xyz += step.reshape(xyz.shape)
+            continue
+        if step_norm <= cartesian_step_tolerance:
+            return BackTransformationResult(xyz, True, iteration - 1, maximum_residual)
+        objective = 0.5 * float(np.dot(weighted_residual, weighted_residual))
+        accepted = False
+        scale = 1.0
+        candidate = xyz
+        candidate_objective = objective
+        while scale >= 2.0**-20:
+            trial = xyz + scale * step.reshape(xyz.shape)
+            trial_values = eval_primitives(primitives, trial)
+            trial_residual = np.asarray(
+                [float(targets[int(index)]) - trial_values[index] for index in selected]
+            )
+            for row, index in enumerate(selected):
+                if primitives[int(index)].kind == "dihedral":
+                    trial_residual[row] = _periodic_difference(trial_residual[row])
+            trial_weighted = root_weights * trial_residual
+            trial_objective = 0.5 * float(np.dot(trial_weighted, trial_weighted))
+            if trial_objective < objective:
+                candidate = trial
+                candidate_objective = trial_objective
+                accepted = True
+                break
+            scale *= 0.5
+        if not accepted:
+            return BackTransformationResult(xyz, True, iteration - 1, maximum_residual)
+        xyz = candidate
+        relative_improvement = (objective - candidate_objective) / max(1.0, objective)
+        if relative_improvement <= objective_tolerance:
+            values = eval_primitives(primitives, xyz)
+            residual = np.asarray(
+                [float(targets[int(index)]) - values[index] for index in selected]
+            )
+            for row, index in enumerate(selected):
+                if primitives[int(index)].kind == "dihedral":
+                    residual[row] = _periodic_difference(residual[row])
+            return BackTransformationResult(
+                xyz, True, iteration, float(np.max(np.abs(residual)))
+            )
     return BackTransformationResult(xyz, False, max_iterations, maximum_residual)
 
 
@@ -415,9 +517,14 @@ def _conjugation_delta_angstrom(
     single = left[0] + right[0]
     double = left[1] + right[1]
     triple = left[2] + right[2]
-    width = min(abs(double - single), abs(triple - double)) / 1.5
-    if width <= 1.0e-12:
+    spacings = [abs(double - single), abs(triple - double)]
+    # Some established coordination references (notably C--S) have a
+    # degenerate double/triple sum.  Retain the published 1/1.5 width rule
+    # using the remaining non-zero spacing instead of silently disabling Conj.
+    positive_spacings = [value for value in spacings if value > 1.0e-12]
+    if not positive_spacings:
         return 0.0
+    width = min(positive_spacings) / 1.5
     return float(
         -delta_cv_angstrom * np.exp(-((float(distance_angstrom) - double) / width) ** 2)
     )

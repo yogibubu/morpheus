@@ -8,7 +8,7 @@ The main predicate-guided MORPHEUS run is reproduced from the repository root
 with:
 
 ```sh
-PYTHONPATH=$(printf '%s:' packages/*/src) python -m matrix semiexp \
+matrix semiexp \
   --xyzin packages/matrix-morpheus/examples/semiexp/norcamphor/xyzin \
   --outdir working/semiexp/norcamphor_table3_kraitchman \
   --backend python \

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from matrix_core.isotopologues import (
+from matrix_chem.isotopologues import (
     XYZIN_ISOTOPOLOGUES_SCHEMA,
     XyzinIsotopologueRecord,
     format_xyzin_isotopologue_issues,
@@ -14,7 +14,7 @@ from matrix_core.isotopologues import (
     xyzin_isotopologue_validation_errors,
     xyzin_isotopologue_section_lines,
 )
-from matrix_core.xyzin_geometry import read_xyzin_geometry
+from matrix_chem.xyzin_geometry import read_xyzin_geometry
 
 from .contracts import (
     ElectronicCorrection,
@@ -122,3 +122,15 @@ def _weights_tuple(sigmas: tuple[float, float, float] | None) -> RotationalConst
     if sigmas is None:
         return None
     return RotationalConstants(*(1.0 / (sigma * sigma) for sigma in sigmas))
+
+
+__all__ = [
+    "XYZIN_ISOTOPOLOGUES_SCHEMA",
+    "has_xyzin_isotopologues",
+    "observations_from_xyzin_records",
+    "parse_xyzin_isotopologues_lines",
+    "read_xyzin_isotopologues",
+    "write_xyzin_isotopologues",
+    "xyzin_isotopologue_section_lines",
+    "xyzin_records_from_observations",
+]

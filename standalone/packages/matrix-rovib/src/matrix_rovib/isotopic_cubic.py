@@ -9,7 +9,7 @@ import numpy as np
 
 from matrix_chem import get_default_isotope, get_isotope
 from matrix_chem.topology.elements import atomic_number
-from matrix_core import resolve_compute_backend
+from matrix_numerics import resolve_compute_backend
 
 from .vibin import didq_sym6, modes_from_hessian
 
@@ -51,6 +51,62 @@ class IsotopicCubicNormalField:
     @property
     def semidiagonal_f3ijj_mw(self) -> np.ndarray:
         return np.asarray(self.cubic_semidiagonal_f3ijj_mw, dtype=float)
+
+
+@dataclass(frozen=True)
+class IsotopologueRovibrationalKinematics:
+    """Mass-specific principal-axis data required by Delta Bvib."""
+
+    coordinates_principal_A: np.ndarray
+    modes_principal_mw: np.ndarray
+    inertia_principal_amu_bohr2: np.ndarray
+    inertia_derivatives_amu_sqrt_ang: np.ndarray
+    coriolis: dict[str, np.ndarray]
+
+
+def rovibrational_kinematics_from_modes(
+    coordinates_angstrom,
+    masses_amu,
+    modes_mw,
+) -> IsotopologueRovibrationalKinematics:
+    """Build the isotope-specific Eckart/principal-axis rovibrational data.
+
+    ``modes_mw`` contains orthonormal mass-weighted normal modes with shape
+    ``(nvib, natoms, 3)``.  The result is provider independent and can be used
+    with either Cartesian or curvilinear potential derivatives.
+    """
+
+    coordinates = np.asarray(coordinates_angstrom, dtype=float)
+    masses = np.asarray(masses_amu, dtype=float).reshape(-1)
+    modes = np.asarray(modes_mw, dtype=float)
+    if coordinates.shape != (masses.size, 3):
+        raise ValueError("coordinates and isotope masses disagree")
+    if modes.ndim != 3 or modes.shape[1:] != (masses.size, 3):
+        raise ValueError("mass-weighted modes must have shape nvib x natoms x 3")
+    if np.any(masses <= 0.0) or not all(
+        np.all(np.isfinite(value)) for value in (coordinates, masses, modes)
+    ):
+        raise ValueError("rovibrational kinematics require finite coordinates and positive masses")
+    flattened = modes.reshape((modes.shape[0], -1))
+    if not np.allclose(
+        flattened @ flattened.T,
+        np.eye(modes.shape[0]),
+        rtol=2.0e-7,
+        atol=2.0e-7,
+    ):
+        raise ValueError("mass-weighted normal modes are not orthonormal")
+    principal_coords, principal_modes, inertia = _principal_axis_frame(
+        coordinates, masses, modes
+    )
+    return IsotopologueRovibrationalKinematics(
+        coordinates_principal_A=principal_coords,
+        modes_principal_mw=principal_modes,
+        inertia_principal_amu_bohr2=inertia,
+        inertia_derivatives_amu_sqrt_ang=didq_sym6(
+            masses, principal_coords, principal_modes
+        ),
+        coriolis=_coriolis_matrices(masses, principal_modes),
+    )
 
 
 def cartesian_cubic_from_normal_modes(
@@ -155,22 +211,18 @@ def transform_normal_cubic_for_isotopologue(
         requested_backend=backend,
         zero_tolerance=float(zero_tolerance),
     )
-    principal_coords, principal_modes, inertia = _principal_axis_frame(
-        coords, target_masses, target_modes
-    )
-    derivatives = didq_sym6(target_masses, principal_coords, principal_modes)
-    coriolis = _coriolis_matrices(target_masses, principal_modes)
+    kinematics = rovibrational_kinematics_from_modes(coords, target_masses, target_modes)
     return IsotopicCubicNormalField(
         masses_amu=target_masses,
         frequencies_cm1=frequencies,
         modes_mw=target_modes,
         cubic_semidiagonal_f3ijj_mw=semidiagonal,
         cubic_mw=None,
-        coordinates_principal_A=principal_coords,
-        modes_principal_mw=principal_modes,
-        inertia_principal_amu_bohr2=inertia,
-        inertia_derivatives_amu_sqrt_ang=derivatives,
-        coriolis=coriolis,
+        coordinates_principal_A=kinematics.coordinates_principal_A,
+        modes_principal_mw=kinematics.modes_principal_mw,
+        inertia_principal_amu_bohr2=kinematics.inertia_principal_amu_bohr2,
+        inertia_derivatives_amu_sqrt_ang=kinematics.inertia_derivatives_amu_sqrt_ang,
+        coriolis=kinematics.coriolis,
         transform_diagnostics=diagnostics,
     )
 
@@ -281,22 +333,18 @@ def transform_cartesian_cubic_for_isotopologue(
             diagnostics,
         )
 
-    principal_coords, principal_modes, inertia = _principal_axis_frame(
-        coords, masses, modes_mw
-    )
-    derivatives = didq_sym6(masses, principal_coords, principal_modes)
-    coriolis = _coriolis_matrices(masses, principal_modes)
+    kinematics = rovibrational_kinematics_from_modes(coords, masses, modes_mw)
     return IsotopicCubicNormalField(
         masses_amu=masses,
         frequencies_cm1=frequencies,
         modes_mw=modes_mw,
         cubic_semidiagonal_f3ijj_mw=semidiagonal,
         cubic_mw=cubic_mw,
-        coordinates_principal_A=principal_coords,
-        modes_principal_mw=principal_modes,
-        inertia_principal_amu_bohr2=inertia,
-        inertia_derivatives_amu_sqrt_ang=derivatives,
-        coriolis=coriolis,
+        coordinates_principal_A=kinematics.coordinates_principal_A,
+        modes_principal_mw=kinematics.modes_principal_mw,
+        inertia_principal_amu_bohr2=kinematics.inertia_principal_amu_bohr2,
+        inertia_derivatives_amu_sqrt_ang=kinematics.inertia_derivatives_amu_sqrt_ang,
+        coriolis=kinematics.coriolis,
         transform_diagnostics=diagnostics,
     )
 

@@ -1,0 +1,108 @@
+{
+  "schema": "matrix.zaff.level_manifest.v1",
+  "version": "1.0.0",
+  "electronic_reference": {
+    "backend": "any validated QM code through APOC",
+    "method": "PBE0",
+    "basis": "def2-TZVP",
+    "population_owner": "APOC",
+    "observables": [
+      "intrinsic_CM5",
+      "Mayer_bond_orders",
+      "atomic_synthons"
+    ],
+    "reason": "PBE0 has one functional definition across codes; def2-TZVP balances cost and accuracy"
+  },
+  "synthon_typing": {
+    "descriptor_fields": [
+      "charge",
+      "coordination",
+      "electron_domains",
+      "effective_radius",
+      "polarizability",
+      "covalency",
+      "delocalization",
+      "strain",
+      "sigma_index",
+      "pi_index",
+      "pi_pi_index"
+    ],
+    "component_thresholds": [
+      0.05,
+      0.20,
+      0.20,
+      0.05,
+      0.15,
+      0.05,
+      0.05,
+      0.05,
+      0.15,
+      0.10,
+      0.10
+    ],
+    "intrinsic_only": true,
+    "noncovalent_retyping": false
+  },
+  "radial_contract": {
+    "form": "damped Exp-PE modified-Morse polynomial",
+    "reference_path": "analytic",
+    "large_system_path": "squared-distance lookup tables",
+    "fitted_families": [
+      "Lennard-Jones m-n",
+      "exponential-r^-6"
+    ],
+    "selection_rule": "same Hamiltonian and declared error tolerance on analytic and lookup paths"
+  },
+  "levels": [
+    {
+      "id": "ZAFF-fast",
+      "aliases": ["FAST", "ZFAST", "zaff-fast"],
+      "extends": null,
+      "geometry": "complete primitive field; runtime may project FAST_RIGID_TORSIONAL",
+      "active_terms": [
+        "primitive bonded stretches and bends",
+        "intrinsic CM5 Gaussian electrostatics",
+        "isotropic synthon-pair Exp-PE",
+        "directional H-bond Exp-PE",
+        "directional X-bond Exp-PE",
+        "synthon-typed GFN-FF-derived Fourier torsions",
+        "validated primitive ring terms",
+        "optional declared reaction field and confinement"
+      ],
+      "parameter_owner": "resident ZAFF libraries compiled by ARCHITECT",
+      "required_qm_derivatives": []
+    },
+    {
+      "id": "ZAFF0",
+      "aliases": ["Z0", "Z0-diagonal", "zaff0"],
+      "extends": "ZAFF-fast",
+      "geometry": "diagonal uncoupled realization of the complete seed",
+      "active_terms": [
+        "all ZAFF-fast terms without inter-coordinate couplings"
+      ],
+      "parameter_owner": "ARCHITECT",
+      "required_qm_derivatives": []
+    },
+    {
+      "id": "ZAFF1",
+      "aliases": ["Z1", "ZAFF-flex", "zaff-flex"],
+      "extends": "ZAFF0",
+      "geometry": "flexible harmonic field",
+      "active_terms": [
+        "all ZAFF0 terms",
+        "bonded harmonic field and required couplings fitted to a QM Hessian"
+      ],
+      "parameter_owner": "ARCHITECT",
+      "required_qm_derivatives": ["gradient", "Hessian"]
+    },
+    {
+      "id": "ZAFF2",
+      "aliases": ["Z2", "ZAFF-full", "zaff-full"],
+      "extends": "ZAFF1",
+      "geometry": "complete anharmonic field",
+      "active_terms": ["all ZAFF1 terms", "validated anharmonic local terms and couplings"],
+      "parameter_owner": "ARCHITECT",
+      "required_qm_derivatives": ["gradient", "Hessian", "displaced gradients or equivalent anharmonic training data"]
+    }
+  ]
+}

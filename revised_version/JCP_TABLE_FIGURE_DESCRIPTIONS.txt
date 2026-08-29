@@ -1,0 +1,49 @@
+MORPHEUS — ALTERNATE TEXT FOR TABLES AND FIGURES
+
+Figure 1: Flow diagram separating chemical and spectroscopic input, redundant primitive coordinates, two symmetry-adapted active-space routes, model-advisor relations, least-squares refinement, and the final semiexperimental Cartesian structure with propagated uncertainties.
+
+Figure 2: Three-row ledger of representative stretch, bend, and protected ring-puckering SONIC variables for camphor. Each row connects a readable primitive expansion and units to its molecular displacement and possible model role.
+
+Figure 3: Molecular structures in the validation set, spanning acyclic, cyclic, planar, aromatic, fused, bridged, glycine, and anhydride systems. The set exercises distinct topology, symmetry, isotopic-coverage, and reduced-dimensionality decisions.
+
+Figure 4: Bar-chart audit comparing generated coordinates, symmetry-active coordinates, retained fit variables, and generated constraints across the benchmark systems. The workflow maps topology, symmetry, and isotopic coverage to an algorithmic refinement model without molecule-specific coordinate edits.
+
+Figure 5: Bar charts compare candidate planar rotational-component pairs for nitrobenzene and azulene. The selected pair preserves numerical rank and minimizes the complete diagnostic residual, while the omitted component remains an external validation observable.
+
+Figure 6: Nitrobenzene substitution-coordinate diagnostic. The upper chart compares absolute substitution coordinates with fitted principal-axis coordinates; the lower chart shows signed differences and exposes the larger relative uncertainty of coordinates near a principal axis.
+
+Figure 7: Four charts compare glycine I structural parameters with the quantum-chemical reference. Fitted bond lengths and valence angles are shown above, while the lower charts show small and chemically localized semiexperimental corrections.
+
+Figure 8: Camphor validation combines bond-length and valence-angle shift distributions with a logarithmic stability plot. The accepted model and mild perturbations remain close to the reference, whereas removal of hydrogen predicates or tight substitution-coordinate predicates produces large distortions.
+
+Figure 9: Flow diagram of the glycine calculation from quantum-chemical geometry, vibrational corrections, isotopologue data, molecular perception, and SONIC generation through advisor relations and least-squares refinement to the final semiexperimental structure and diagnostics.
+
+Figure 10: Three-dimensional testosterone structure used for the 49-atom scale demonstration. Its fused-ring topology tests automated non-redundant coordinate generation and reduced model construction when isotope-rich rotational data are unavailable.
+
+Table I: Operational comparison of Z-matrix, user-defined generalized internal-coordinate, and MORPHEUS workflows. MORPHEUS derives active variables, ring and bridge treatment, missing-isotope relations, symmetry, and the output audit from the molecular and statistical model.
+
+Table II: Comparison of the manual decisions removed in four representative refinements. Generated coordinate dimensions, constraints or parameter classes, fit outcomes, and zero molecule-specific user edits summarize the reproducible model-construction burden.
+
+Table III: Examples of readable primitive-coordinate relations generated for glycine and ring systems. Bond, angle, out-of-plane, endocyclic-bend, and ring-puckering expressions retain a direct chemical interpretation within the generated model.
+
+Table IV: Phthalic-anhydride comparison of an unregularized model, frozen hydrogen frames, and soft predicates. Only the predicate model is full rank with moderate conditioning and simultaneous agreement in bond lengths and angles.
+
+Table V: Leave-one-isotopologue tests for maleic anhydride and nitrobenzene. Maleic anhydride remains stable, whereas deuterated nitrobenzene omissions expose weaker directions through larger prediction residuals, Cartesian shifts, and condition numbers.
+
+Table VI: Generated structural-model decisions for glycine I, glycine II, norcamphor, and camphor. The table compares coordinate-space dimensions, retained variables, generated constraints or predicates, and parameter classes after symmetry and rank analysis.
+
+Table VII: Camphor validation controls compare coordinate-basis replay, robust loss, predicate-width scans, random multistarts, and leave-group-out tests. Hydrogen-predicate removal is the clear failure mode, producing much larger structural shifts despite small rotational residuals.
+
+Table VIII: Glycine I rotational residuals over five isotopologues. The final semiexperimental geometry reduces the root-mean-square and maximum errors by roughly two orders of magnitude relative to the quantum-chemical reference.
+
+Table IX: Parent glycine I rotational constants for experiment, the quantum-chemical reference, and the final semiexperimental geometry. The final fit closely reproduces all three corrected experimental principal rotational constants.
+
+Table X: Glycine II comparison of published-type and quantum-chemical constraint targets for the same corrected isotopologue data. Both models retain rank 19 and give similar complete rotational residuals.
+
+Table XI: Weighted-predicate tests for glycine I and II. Adding conservative structural predicates preserves the rank of each reduced-dimensionality model and improves its condition number, with only small changes in the complete rotational residual.
+
+Table XII: Testosterone rotational residuals for the unrefined quantum-chemical geometry and several reduced models. Separate carbon–carbon and carbon–oxygen stretch classes give the best agreement from the parent-only data set.
+
+Supporting Information Figure S1: Atom-numbered structures for the benchmark and companion systems. The labels provide the common reference used by the numerical tables, coordinate definitions, archived inputs, and structural diagnostics in the Supporting Information.
+
+The Supporting Information tables contain text and numerical data rather than graphical content. Their captions identify the quantity, units, comparison, and diagnostic role, and machine-readable counterparts are included in the reproducibility material.

@@ -10,6 +10,10 @@ from typing import Callable
 
 import numpy as np
 
+from matrix_chem import (
+    CoordinateComponent,
+    validate_coordinate_component_transform,
+)
 from matrix_chem.topology.covalent_radii import covalent_radius
 from matrix_chem.topology.elements import atomic_number, atomic_symbol
 from matrix_chem.topology.pipeline import build_topology_objects
@@ -583,6 +587,24 @@ def validate_gic_definition(definition: GICDefinition) -> None:
         raise GICDefinitionError("GIC definition names are not unique")
     for index, primitive in enumerate(definition.primitives, start=1):
         _validate_primitive(primitive, natoms, index)
+    try:
+        validate_coordinate_component_transform(
+            tuple(
+                CoordinateComponent(
+                    operator=primitive.function,
+                    atoms=primitive.atoms,
+                    mode=primitive.mode,
+                    ref_atoms=primitive.ref,
+                    context=(primitive.kind,),
+                )
+                for primitive in definition.primitives
+            ),
+            u_matrix,
+        )
+    except ValueError as exc:
+        raise GICDefinitionError(
+            f"GIC definition component invariant failed: {exc}"
+        ) from exc
     if definition.symmetrized and any(
         not irrep.strip() or irrep == "UNK" for irrep in definition.irreps
     ):
@@ -800,13 +822,6 @@ def _primitive_signature(primitive: Primitive) -> str:
     return f"{primitive.kind}:mode={int(getattr(primitive, 'mode', 0))}:atoms={atoms}{suffix}"
 
 
-def _coordinate_kind_counts(names: tuple[str, ...], labels: tuple[str, ...]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for index, label in enumerate(labels):
-        name = names[index] if index < len(names) else ""
-        kind = _coordinate_kind(name, label)
-        counts[kind] = counts.get(kind, 0) + 1
-    return counts
 
 
 def _coordinate_kind(name: str, label: str) -> str:
@@ -815,7 +830,7 @@ def _coordinate_kind(name: str, label: str) -> str:
         return "bond"
     if any(marker in text for marker in ("lin", "l(")):
         return "linear_bend"
-    if any(marker in text for marker in ("oop", "out", "impd", "u(")):
+    if any(marker in text for marker in ("oop", "out", "impd", "u(", "h(")):
         return "out_of_plane"
     if any(marker in text for marker in ("tor", "pck", "phi", "d(")):
         return "dihedral"
@@ -848,11 +863,11 @@ def parse_gicforge_line(line: str) -> tuple[str, list[tuple[float, Primitive]], 
     rhs = stripped.split("=", 1)[1].strip()
     terms: list[tuple[float, Primitive]] = []
     number = r"[+-]?\s*(?:\d+(?:\.\d*)?|\.\d+)(?:[EDed][+-]?\d+)?"
-    for match in re.finditer(rf"({number})\s*\*\s*([RADLU])\(([^)]*)\)", rhs):
+    for match in re.finditer(rf"({number})\s*\*\s*([RADLUFH])\(([^)]*)\)", rhs):
         coeff = float(match.group(1).replace(" ", "").replace("D", "E").replace("d", "e"))
         terms.append((coeff, _gicforge_primitive(match.group(2), match.group(3))))
     if not terms:
-        simple = re.search(r"\b([RADLU])\(([^)]*)\)", rhs)
+        simple = re.search(r"\b([RADLUFH])\(([^)]*)\)", rhs)
         if simple:
             terms.append((1.0, _gicforge_primitive(simple.group(1), simple.group(2))))
     if not terms:
@@ -976,14 +991,17 @@ def _gicforge_primitive(kind: str, atoms_text: str) -> Primitive:
         return Primitive("bond", atoms)
     if kind == "A" and len(atoms) == 3:
         return Primitive("angle", atoms)
-    if kind == "D" and len(atoms) == 4:
+    if kind in {"D", "F"} and len(atoms) == 4:
         return Primitive("dihedral", atoms)
     if kind == "U" and len(atoms) == 4:
         return Primitive("out_of_plane", atoms)
+    if kind == "H" and len(atoms) == 4:
+        return Primitive("out_of_plane_height", atoms)
     if kind == "L" and len(values) == 5:
         mode_token = values[4]
         mode = mode_token if mode_token in {-1, -2} else -1
-        return Primitive("linear_bend", atoms[:3], mode=mode)
+        ref = (values[3] - 1,) if values[3] > 0 else ()
+        return Primitive("linear_bend", atoms[:3], mode=mode, ref=ref)
     raise GICDefinitionError(f"Unsupported GICForge primitive {kind}({atoms_text})")
 
 
@@ -1001,8 +1019,11 @@ def _primitive_alias(primitive: Primitive) -> str:
         return f"D({atoms})"
     if primitive.kind == "out_of_plane":
         return f"U({atoms})"
+    if primitive.kind == "out_of_plane_height":
+        return f"H({atoms})"
     if primitive.kind == "linear_bend":
-        return f"L({atoms},0,{primitive.mode})"
+        reference = primitive.ref[0] + 1 if len(primitive.ref) == 1 else 0
+        return f"L({atoms},{reference},{primitive.mode})"
     return f"{primitive.kind}({atoms})"
 
 
@@ -1030,6 +1051,7 @@ def _validate_primitive(primitive: Primitive, natoms: int, index: int) -> None:
         "angle": 3,
         "dihedral": 4,
         "out_of_plane": 4,
+        "out_of_plane_height": 4,
         "linear_bend": 3,
     }.get(primitive.kind)
     if expected is None:
@@ -1142,8 +1164,14 @@ def _primitive_expression(primitive: Primitive) -> str:
         return f"D({atoms[0]:3d},{atoms[1]:3d},{atoms[2]:3d},{atoms[3]:3d})"
     if primitive.kind == "out_of_plane":
         return f"U({atoms[0]:3d},{atoms[1]:3d},{atoms[2]:3d},{atoms[3]:3d})"
+    if primitive.kind == "out_of_plane_height":
+        return f"H({atoms[0]:3d},{atoms[1]:3d},{atoms[2]:3d},{atoms[3]:3d})"
     if primitive.kind == "linear_bend":
-        return f"L({atoms[0]:3d},{atoms[1]:3d},{atoms[2]:3d},  0,{primitive.mode:3d})"
+        reference = primitive.ref[0] + 1 if len(primitive.ref) == 1 else 0
+        return (
+            f"L({atoms[0]:3d},{atoms[1]:3d},{atoms[2]:3d},"
+            f"{reference:3d},{primitive.mode:3d})"
+        )
     raise GICDefinitionError(
         f"Unsupported primitive kind for Gaussian GIC output: {primitive.kind}"
     )

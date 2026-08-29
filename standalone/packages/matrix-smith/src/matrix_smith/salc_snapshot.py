@@ -8,8 +8,13 @@ from typing import Any
 
 import numpy as np
 
-from .definition import GICDefinition, read_gic_definition_from_xyzin
-from .policy import SALC_PATH_OVERLAP_WARNING_THRESHOLD, SALC_PATH_PIVOT_GAP_WARNING
+from .definition import read_gic_definition_from_xyzin
+from .models import GICDefinition
+from .policy import (
+    SALC_PATH_OVERLAP_WARNING_THRESHOLD,
+    SALC_PATH_PIVOT_GAP_WARNING,
+    SALC_SUBSPACE_PROJECTOR_TOLERANCE,
+)
 
 
 SALC_SNAPSHOT_SCHEMA = "matrix.smith.gic_salc_snapshot.v2"
@@ -264,6 +269,7 @@ def _salc_records(
                 "coefficients": [
                     [primitive_id, _rounded_coefficient(coefficient, rounding_decimals)]
                     for primitive_id, coefficient in gic.coefficients
+                    if abs(float(coefficient)) > SALC_COEFFICIENT_TOLERANCE
                 ],
             }
         )
@@ -353,7 +359,7 @@ def _first_selected_difference(
         if left_ids != right_ids or not np.allclose(
             left_projector,
             right_projector,
-            atol=SALC_COEFFICIENT_TOLERANCE,
+            atol=SALC_SUBSPACE_PROJECTOR_TOLERANCE,
             rtol=0.0,
         ):
             return (
@@ -437,12 +443,14 @@ def _pivot_signature(matrix: np.ndarray, primitive_ids: tuple[str, ...]) -> tupl
 
 
 def _selected_subspace_projector(records: tuple[Any, ...]) -> tuple[tuple[str, ...], np.ndarray]:
+    coefficient_tolerance = SALC_SUBSPACE_PROJECTOR_TOLERANCE
     primitive_ids = tuple(
         sorted(
             {
                 str(primitive_id)
                 for record in records
-                for primitive_id, _coefficient in record.get("coefficients", ())
+                for primitive_id, coefficient in record.get("coefficients", ())
+                if abs(float(coefficient)) > coefficient_tolerance
             }
         )
     )
@@ -450,6 +458,8 @@ def _selected_subspace_projector(records: tuple[Any, ...]) -> tuple[tuple[str, .
     vectors = np.zeros((len(primitive_ids), len(records)), dtype=float)
     for column, record in enumerate(records):
         for primitive_id, coefficient in record.get("coefficients", ()):
+            if abs(float(coefficient)) <= coefficient_tolerance:
+                continue
             vectors[primitive_index[str(primitive_id)], column] = float(coefficient)
     if vectors.size == 0:
         return primitive_ids, np.zeros((0, 0), dtype=float)

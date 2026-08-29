@@ -2,21 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-
-import numpy as np
+import tempfile
 
 from matrix_chem.geometry import MolecularGeometry
 from matrix_chem.geometry_io import GeometryParseError
+from matrix_chem import read_xyz
+from matrix_chem.symmetry import analyze_molecular_symmetry, symmetrize_molecular_geometry
+from matrix_switch import (
+    RDKitFallbackUnavailableError,
+    smiles_to_cartesian,
+)
 
 
-SMILES_SOURCE_FORMAT = "smiles_rdkit"
+SMILES_SOURCE_FORMAT = "smiles_switch"
 SMILES_MARKER = "SMILES"
-DEFAULT_RDKIT_RANDOM_SEED = 61453
-
-
-class RDKitUnavailableError(GeometryParseError):
-    """Raised when a SMILES import requires RDKit but RDKit is unavailable."""
+DEFAULT_SMILES_FALLBACK_RANDOM_SEED = 61453
 
 
 @dataclass(frozen=True)
@@ -27,14 +27,6 @@ class SmilesInput:
     multiplicity: int | None = None
     route_lines: tuple[str, ...] = ()
     source_path: Path | None = None
-
-
-def rdkit_available() -> bool:
-    try:
-        _rdkit_modules()
-    except RDKitUnavailableError:
-        return False
-    return True
 
 
 def is_legacy_smiles_input(path: Path) -> bool:
@@ -76,7 +68,11 @@ def extract_legacy_smiles_input(path: Path) -> SmilesInput:
     )
 
 
-def read_legacy_smiles_input(path: Path) -> MolecularGeometry:
+def read_legacy_smiles_input(
+    path: Path,
+    *,
+    fallback_policy: str | None = None,
+) -> MolecularGeometry:
     smiles_input = extract_legacy_smiles_input(path)
     return smiles_to_geometry(
         smiles_input.smiles,
@@ -85,6 +81,7 @@ def read_legacy_smiles_input(path: Path) -> MolecularGeometry:
         multiplicity=smiles_input.multiplicity,
         source_path=smiles_input.source_path,
         route_lines=smiles_input.route_lines,
+        fallback_policy=fallback_policy,
     )
 
 
@@ -96,69 +93,131 @@ def smiles_to_geometry(
     multiplicity: int | None = None,
     source_path: Path | None = None,
     route_lines: tuple[str, ...] = (),
-    random_seed: int = DEFAULT_RDKIT_RANDOM_SEED,
+    random_seed: int = DEFAULT_SMILES_FALLBACK_RANDOM_SEED,
+    relaxation_method: str = "NONE",
+    fallback_policy: str | None = None,
 ) -> MolecularGeometry:
-    Chem, AllChem = _rdkit_modules()
+    """Build the deterministic SWITCH Cartesian seed for a SMILES string.
+
+    Structural relaxation is deliberately opt-in.  The canonical MATRIX route
+    hands a non-credible/generated seed to ORACLE and then to ARCHITECT, where
+    GFN-FF (or its declared fallback) is planned with explicit resources and
+    user authorization.  Geometry parsing must never launch a calculation as
+    an undocumented side effect.
+    """
     normalized_smiles = _normalize_legacy_smiles(smiles)
-    mol = Chem.MolFromSmiles(normalized_smiles)
-    if mol is None:
-        raise GeometryParseError(f"RDKit could not parse SMILES: {smiles}")
-    mol = Chem.AddHs(mol)
-
-    params = AllChem.ETKDGv3()
-    params.randomSeed = int(random_seed)
-    embed_status = AllChem.EmbedMolecule(mol, params)
-    if embed_status != 0:
-        embed_status = AllChem.EmbedMolecule(mol, randomSeed=int(random_seed))
-    if embed_status != 0:
-        raise GeometryParseError(f"RDKit could not embed SMILES in 3D: {smiles}")
-
-    optimize_status: int | None = None
+    requested_relaxation = str(relaxation_method).strip().upper().replace("-", "_")
+    if requested_relaxation not in {"NONE", "GFN_FF"}:
+        raise ValueError("relaxation_method must be NONE or GFN_FF")
     try:
-        optimize_status = int(AllChem.UFFOptimizeMolecule(mol, maxIters=200))
-    except Exception:
-        optimize_status = None
+        seed = smiles_to_cartesian(
+            normalized_smiles,
+            title=title or smiles,
+            multiplicity=multiplicity,
+            complete_hydrogens=True,
+            fallback_policy=fallback_policy,
+            fallback_random_seed=random_seed,
+        )
+    except (ValueError, RDKitFallbackUnavailableError) as exc:
+        raise GeometryParseError(str(exc)) from exc
+    job_charge = int(seed.charge or 0) if charge is None else int(charge)
+    applied_relaxation = "NONE"
+    optimize_status: int | None = None
+    if requested_relaxation == "GFN_FF":
+        seed = _relax_with_gfn_ff(
+            seed,
+            charge=int(job_charge),
+            multiplicity=int(multiplicity or 1),
+        )
+        approximate_symmetry = analyze_molecular_symmetry(
+            seed,
+            distance_tolerance=5.0e-2,
+            inertia_tolerance=1.0e-3,
+            max_rotation_order=6,
+        )
+        seed = symmetrize_molecular_geometry(seed, approximate_symmetry)
+        applied_relaxation = "GFN-FF"
+        optimize_status = 0
 
-    conformer = mol.GetConformer()
-    atoms: list[str] = []
-    coords: list[list[float]] = []
-    for atom in mol.GetAtoms():
-        position = conformer.GetAtomPosition(atom.GetIdx())
-        atoms.append(atom.GetSymbol())
-        coords.append([float(position.x), float(position.y), float(position.z)])
-
-    job_charge = int(Chem.GetFormalCharge(mol)) if charge is None else charge
     return MolecularGeometry(
-        atoms=tuple(atoms),
-        coordinates_angstrom=np.asarray(coords, dtype=float),
-        comment=title or smiles,
+        atoms=seed.atoms,
+        coordinates_angstrom=seed.coordinates_angstrom,
+        comment=seed.comment,
         source_format=SMILES_SOURCE_FORMAT,
         source_path=source_path,
         charge=job_charge,
         multiplicity=multiplicity,
         metadata={
+            **dict(seed.metadata),
             "smiles": smiles,
             "normalized_smiles": normalized_smiles,
             "route": route_lines,
-            "rdkit_embed_status": embed_status,
-            "rdkit_uff_optimize_status": optimize_status,
+            "smiles_parser": (
+                "RDKit fallback"
+                if bool(seed.metadata.get("fallback_used", False))
+                else "MATRIX SWITCH"
+            ),
+            "hydrogen_completion": (
+                "RDKIT_FALLBACK"
+                if bool(seed.metadata.get("fallback_used", False))
+                else "MATRIX_VALENCE_COMPLETION"
+            ),
+            "relaxation_method": applied_relaxation,
+            "requested_relaxation": requested_relaxation,
+            "optimize_status": optimize_status,
         },
     )
 
 
-def _rdkit_modules() -> tuple[Any, Any]:
+def _relax_with_gfn_ff(
+    geometry: MolecularGeometry,
+    *,
+    charge: int,
+    multiplicity: int,
+) -> MolecularGeometry:
     try:
-        from rdkit import Chem
-        from rdkit.Chem import AllChem
+        from matrix_xtb import run_xtb_job, write_xtb_point_input
     except ImportError as exc:
-        raise RDKitUnavailableError(
-            "RDKit is required for SMILES import; install an ORACLE environment with rdkit"
+        raise GeometryParseError(
+            "GFN-FF SMILES relaxation needs the matrix-link[backends] xTB adapter"
         ) from exc
-    return Chem, AllChem
+    with tempfile.TemporaryDirectory(prefix="matrix-smiles-gfnff-") as scratch_text:
+        scratch = Path(scratch_text)
+        input_path = write_xtb_point_input(
+            scratch / "input.xyz",
+            list(geometry.atoms),
+            geometry.coordinates_angstrom,
+            charge=charge,
+            multiplicity=multiplicity,
+        )
+        run = run_xtb_job(
+            scratch,
+            input_path=input_path,
+            output_path=scratch / "xtb.out",
+            extra_args=("--gfnff", "--opt"),
+        )
+        optimized = scratch / "xtbopt.xyz"
+        if not run.success or not optimized.is_file():
+            raise GeometryParseError(
+                f"GFN-FF could not relax the SMILES seed: {run.message}"
+            )
+        result = read_xyz(optimized)
+    return MolecularGeometry(
+        atoms=result.atoms,
+        coordinates_angstrom=result.coordinates_angstrom,
+        comment=geometry.comment,
+        source_format=geometry.source_format,
+        source_path=geometry.source_path,
+        charge=charge,
+        multiplicity=multiplicity,
+        metadata=dict(geometry.metadata),
+    )
 
 
 def _normalize_legacy_smiles(smiles: str) -> str:
-    return smiles.strip().replace("[C@@H2]", "C").replace("[C@H2]", "C")
+    """Apply format-level normalization without molecule-specific rewrites."""
+
+    return smiles.strip()
 
 
 def _looks_like_legacy_smiles_text(text: str) -> bool:

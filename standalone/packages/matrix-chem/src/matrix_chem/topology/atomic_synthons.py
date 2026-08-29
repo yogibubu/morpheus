@@ -54,21 +54,34 @@ def nval_main_group(Z):
 
 
 class AtomicSynthons:
-    def __init__(self, Z, coords, neighbors):
+    def __init__(self, Z, coords, neighbors, coordination_numbers=None):
         self.Z = Z
         self.coords = coords
         self.neighbors = neighbors
         self.natoms = len(Z)
         self._theta_bar = None
-        self._all_neighbors = [list(range(self.natoms)) for _ in range(self.natoms)]
-        for i in range(self.natoms):
-            self._all_neighbors[i].remove(i)
+        self._coordination_numbers = (
+            None
+            if coordination_numbers is None
+            else np.asarray(coordination_numbers, dtype=float).reshape(self.natoms)
+        )
+        self._all_neighbors = None
+        self._bond_order_cache = {}
+        self._bond_order_components_cache = {}
+        self._effective_radius_cache = np.full(self.natoms, np.nan)
 
     # --------------------------------------------------------
     # Continuous coordination number (CNA)
     # --------------------------------------------------------
 
     def cna(self, i):
+        if self._coordination_numbers is not None:
+            return float(self._coordination_numbers[i])
+        if self._all_neighbors is None:
+            self._all_neighbors = [
+                [neighbor for neighbor in range(self.natoms) if neighbor != atom]
+                for atom in range(self.natoms)
+            ]
         return continuous_coordination_number(i, self.Z, self.coords, self._all_neighbors)
 
     # --------------------------------------------------------
@@ -81,6 +94,9 @@ class AtomicSynthons:
         This descriptor interpolation is distinct from the radius internal to
         graph perception; neither is a selectable alternative model.
         """
+        cached = self._effective_radius_cache[i]
+        if np.isfinite(cached):
+            return float(cached)
         atomic_number = int(self.Z[i])
         coordination = self.cna(i)
         table = PYYKKO[atomic_number]
@@ -90,24 +106,32 @@ class AtomicSynthons:
                 raise ValueError(
                     f"no covalent radius is available for atomic number {atomic_number}"
                 )
-            return float(fallback)
+            result = float(fallback)
+            self._effective_radius_cache[i] = result
+            return result
         keys = sorted(table)
         if coordination <= keys[0]:
-            return table[keys[0]]
+            result = table[keys[0]]
+            self._effective_radius_cache[i] = result
+            return result
         if coordination >= keys[-1]:
-            return table[keys[-1]]
+            result = table[keys[-1]]
+            self._effective_radius_cache[i] = result
+            return result
         lower = int(math.floor(coordination))
         if lower not in table:
             lower = max(key for key in keys if key <= lower)
         upper = min(key for key in keys if key > lower)
         fraction = (coordination - lower) / (upper - lower)
-        return hermite_c1(
+        result = hermite_c1(
             fraction,
             table[lower],
             table[upper],
             hermite_slope(table, keys, lower),
             hermite_slope(table, keys, upper),
         )
+        self._effective_radius_cache[i] = result
+        return result
 
     # --------------------------------------------------------
     # Bond order
@@ -115,18 +139,30 @@ class AtomicSynthons:
 
     def bond_order(self, i, j):
         """Return the sole ORACLE bond order: Mayer or geometric Pauling."""
+        key = (i, j) if i < j else (j, i)
+        cached = self._bond_order_cache.get(key)
+        if cached is not None:
+            return cached
         ext = getattr(self, "_external_bond_orders", None)
         if ext:
-            key = (i, j) if i < j else (j, i)
             if key in ext:
-                return float(ext[key])
-        return pauling_bond_order(i, j, self.Z, self.coords)
+                result = float(ext[key])
+                self._bond_order_cache[key] = result
+                return result
+        result = pauling_bond_order(i, j, self.Z, self.coords)
+        self._bond_order_cache[key] = result
+        return result
 
     def bond_order_desc(self, i, j):
         return max(self.bond_order(i, j), BO_MIN_DESC)
 
     def bond_order_components(self, i, j) -> BondOrderComponents:
-        return resolve_bond_order_components(self.bond_order(i, j))
+        key = (i, j) if i < j else (j, i)
+        cached = self._bond_order_components_cache.get(key)
+        if cached is None:
+            cached = resolve_bond_order_components(self.bond_order(i, j))
+            self._bond_order_components_cache[key] = cached
+        return cached
 
     def bond_order_sigma(self, i, j):
         return self.bond_order_components(i, j).sigma
@@ -246,32 +282,32 @@ class AtomicSynthons:
         ext = getattr(self, "_external_charges", None)
         if ext and i in ext:
             return float(ext[i])
-        from .electronegativity import electronegativity
+        from .periodic_properties import periodic_atomic_properties
 
         Zi = int(self.Z[i])
-        chi_i = electronegativity(Zi)
+        chi_i = periodic_atomic_properties(Zi).electronegativity
         ni = principal_quantum_number(Zi)
 
         q = 0.0
         for j in self.neighbors[i]:
             Zj = int(self.Z[j])
-            chi_j = electronegativity(Zj)
+            chi_j = periodic_atomic_properties(Zj).electronegativity
             nj = principal_quantum_number(Zj)
             bo = self.bond_order_desc(i, j)
             q += (chi_j - chi_i) / ((ni + nj) * bo)
         return q
 
     def polarizability(self, i):
-        from .polarizability import polarizability
+        from .periodic_properties import periodic_atomic_properties
 
         Zi = int(self.Z[i])
-        ai = polarizability(Zi)
+        ai = periodic_atomic_properties(Zi).polarizability_angstrom3
         ni = principal_quantum_number(Zi)
 
         a = ai
         for j in self.neighbors[i]:
             Zj = int(self.Z[j])
-            aj = polarizability(Zj)
+            aj = periodic_atomic_properties(Zj).polarizability_angstrom3
             nj = principal_quantum_number(Zj)
             bo = self.bond_order_desc(i, j)
             a += (aj - ai) / ((ni + nj) * bo)
@@ -279,13 +315,19 @@ class AtomicSynthons:
 
     def hindrance(self, i):
         Zi = int(self.Z[i])
+        from .periodic_properties import periodic_atomic_properties
+
         hi = descriptor_vdw_radius(Zi)
+        if hi is None:
+            hi = periodic_atomic_properties(Zi).vdw_radius_angstrom
         ni = principal_quantum_number(Zi)
 
         H = hi
         for j in self.neighbors[i]:
             Zj = int(self.Z[j])
             hj = descriptor_vdw_radius(Zj)
+            if hj is None:
+                hj = periodic_atomic_properties(Zj).vdw_radius_angstrom
             nj = principal_quantum_number(Zj)
             bo = self.bond_order_desc(i, j)
             H += (hj - hi) / ((ni + nj) * bo)

@@ -1,6 +1,5 @@
 # utils/atomic_masses.py
 
-from typing import Optional
 
 # ---------------------------------------------------------------------
 # Mean atomic masses (FilAMS, faithful to Fortran)

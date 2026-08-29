@@ -4,16 +4,13 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from math import degrees
 from pathlib import Path
 
-from .definition import (
-    GICDefinition,
-    evaluate_gic_values,
-    read_gic_definition_from_xyzin,
-    total_symmetric_gic_names,
-)
+from .definition import read_gic_definition_from_xyzin, total_symmetric_gic_names
+from .evaluation import evaluate_gic_values
+from .models import GICDefinition
 from .policy import (
-    COORDINATE_METHOD_NAME,
     FRAGMENT_MODE_PSEUDO_BONDS,
     FRAGMENT_MODE_SPECIAL_COORDINATES,
     REDUCTION_POLICY,
@@ -205,6 +202,31 @@ def gic_report_lines(definition: GICDefinition) -> list[str]:
             lines.extend(_human_coordinate_definition_lines(gic, primitive_by_id))
     else:
         lines.append("NONE")
+    lines.extend(["", "Periodicity and Barrier Seeds", "-----------------------------"])
+    if definition.periodic_coordinate_estimates:
+        for record in definition.periodic_coordinate_estimates:
+            bonds = ",".join(f"{left}-{right}" for left, right in record.central_bonds) or "NONE"
+            ring = ",".join(str(atom) for atom in record.ring_atoms) or "NONE"
+            sources = ",".join(record.source_coordinates) or "NONE"
+            reference = (
+                "UNDEFINED"
+                if record.reference_value_radian is None
+                else f"{degrees(record.reference_value_radian):.10g} deg"
+            )
+            lines.append(
+                f"{record.coordinate_identifier} {record.coordinate_name} family={record.family} "
+                f"definition={record.coordinate_definition} "
+                f"periodicity={record.periodicity} barrier={record.barrier_kcal_mol:.6g} "
+                f"kcal/mol ({record.barrier_cm1:.6g} cm-1) target={record.target} "
+                f"central_bonds={bonds} ring_atoms={ring} sources={sources} "
+                f"reference_value={reference} value_status={record.reference_value_status} "
+                f"domain={record.coordinate_domain} symmetry_number={record.symmetry_number} "
+                f"priority_atom={record.priority_atom if record.priority_atom is not None else 'NONE'} "
+                f"periodicity_source={record.periodicity_source} "
+                f"barrier_source={record.barrier_source} status={record.status}"
+            )
+    else:
+        lines.append("NONE")
     return lines
 
 
@@ -262,7 +284,8 @@ def _human_primitive_lines(primitive, sonic_coefficient: float) -> list[str]:
         ring_atoms = _ring_atoms_from_refs(primitive.refs)
         ring_text = ",".join(str(atom) for atom in ring_atoms) or atoms
         return [
-            f"{prefix}: ring-puckering source torsion D({atoms}) in ordered ring ({ring_text})"
+            f"{prefix}: signed triangular-flap plane incidence F({atoms}) "
+            f"in ordered ring ({ring_text}); analytic kernel D"
         ]
     if family in {"RING_PUCKER_COMPONENT", "RING_PUCKERING"} and function == "U":
         ring_atoms = _ring_atoms_from_refs(primitive.refs)
@@ -282,6 +305,8 @@ def _human_primitive_lines(primitive, sonic_coefficient: float) -> list[str]:
         return [f"{prefix}: {label} D({atoms})"]
     if function == "U":
         return [f"{prefix}: out-of-plane coordinate U({atoms})"]
+    if function == "H":
+        return [f"{prefix}: signed out-of-plane height H({atoms})"]
     if function == "RPCK":
         lines = [
             f"{prefix}: normalized ring-puckering component on ordered ring atoms ({atoms})",
@@ -463,7 +488,7 @@ def _fragment_policy_lines(definition: GICDefinition) -> list[str]:
     if mode == FRAGMENT_MODE_SPECIAL_COORDINATES:
         lines.extend(
             [
-                "Policy: automatic weak-complex default; keep fragments as protected bodies.",
+                "Policy: frozen ORACLE atlas; keep fragments as protected bodies.",
                 "Coordinates: fragment-center distances, center-atom distances, translations and orientations.",
                 "Rationale: preserve inter-fragment rigid-body motion before ordinary valence pruning.",
             ]
@@ -477,14 +502,23 @@ def _fragment_policy_lines(definition: GICDefinition) -> list[str]:
         )
         lines.extend(
             [
-                "Policy: augmented graph with ordinary SONIC coordinates and no artificial-ring protection.",
+                "Policy: augmented graph with provenance-preserving SONIC coordinates and no artificial-ring protection.",
                 "Selection: Merlino/BDPCS3 H-bonds first, then short closure contacts needed for the inter-fragment span.",
                 "Pseudo-bonds: " + _list_or_none(contacts),
-                "Rationale: pseudo-bonds join fragments for ordinary valence-coordinate construction; the resulting graph cycles are not treated as chemical rings.",
+                "Rationale: H-bonds retain the protected HBOND_DISTANCE family while all pseudo-contacts augment connectivity; the resulting graph cycles are not treated as chemical rings.",
             ]
         )
     else:
         lines.append("Policy: no built fragments were consumed by this GIC definition.")
+    if mode != FRAGMENT_MODE_PSEUDO_BONDS and definition.pseudo_bonds:
+        kinds = definition.pseudo_bond_kinds or (
+            ("UNCLASSIFIED",) * len(definition.pseudo_bonds)
+        )
+        contacts = tuple(
+            f"{left}-{right}:{kind}"
+            for (left, right), kind in zip(definition.pseudo_bonds, kinds)
+        )
+        lines.append("Pseudo-bonds: " + _list_or_none(contacts))
     return lines
 
 

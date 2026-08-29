@@ -159,9 +159,17 @@ DEFAULT_COORDINATE_GENERATOR_REGISTRY: tuple[CoordinateGeneratorSpec, ...] = (
         coordinate_family="METAL_COORDINATION",
         produces=("eta centers", "metal-ligand auxiliary coordinates"),
         consumes=("TOPOLOGY.AUXILIARY_NODES", "GEOMETRY.AUXILIARY_NODES"),
-        implemented_by="planned matrix_smith generator module",
-        status=STATUS_PLANNED,
-        notes="Boundary for transition-metal extensions; not active in first release.",
+        implemented_by=(
+            "matrix_smith.definition._interaction_center_primitive_candidates and "
+            "matrix_smith.runtime.gicforge_python high-coordination local SALC paths"
+        ),
+        status=STATUS_LEGACY_PORTED,
+        notes=(
+            "Active transition-metal coordinates include metal--ring/interaction-center "
+            "coordinates and symmetry-adapted metal--ligand local coordinates. "
+            "Template recognition accelerates common coordination polyhedra, while the "
+            "generic local-SVD fallback has no coordination ceiling."
+        ),
     ),
 )
 

@@ -52,6 +52,11 @@ class RunManifest:
     framework: str = MATRIX_MANIFEST_FRAMEWORK
     matrix_version: str = field(default_factory=lambda: matrix_version())
     python_version: str = field(default_factory=platform.python_version)
+    python_executable: str = field(default_factory=lambda: sys.executable)
+    python_abi: str = field(default_factory=lambda: sys.implementation.cache_tag or "")
+    architecture: str = field(default_factory=platform.machine)
+    operating_system: str = field(default_factory=platform.system)
+    environment_prefix: str = field(default_factory=lambda: sys.prefix)
     command: tuple[str, ...] = field(default_factory=lambda: tuple(sys.argv))
     xyzin_sections: dict[str, tuple[str, ...]] = field(default_factory=dict)
     external_backends: dict[str, Any] = field(default_factory=dict)
@@ -113,12 +118,9 @@ def build_run_manifest(
 
 
 def matrix_version() -> str:
-    try:
-        from matrix import __version__
+    from .version import MATRIX_VERSION
 
-        return str(__version__)
-    except Exception:
-        return "unknown"
+    return MATRIX_VERSION
 
 
 def _normalize_command(command: Sequence[str] | str | None) -> tuple[str, ...]:

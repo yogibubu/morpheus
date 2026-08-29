@@ -1,4 +1,4 @@
-"""Persistent local and remote capability profile used by The ONE."""
+"""Persistent local and remote capability profile used by Keymaker."""
 
 from __future__ import annotations
 
@@ -13,8 +13,11 @@ import subprocess
 import sys
 from typing import Mapping
 
+from .atomic_io import atomic_json_write
+
 
 ENVIRONMENT_SCHEMA = "matrix.environment.v1"
+RUNTIME_MACHINE_SCHEMA = "matrix.runtime-machine.v1"
 DEFAULT_CONFIG_PATH = Path("~/.config/matrix/environment.json").expanduser()
 
 PROGRAM_DEFINITIONS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
@@ -56,6 +59,48 @@ _MACOS_APPLICATIONS = {
     "avogadro1": Path("/Applications/Avogadro.app"),
     "vmd": Path("/Applications/VMD.app"),
 }
+
+_LEGACY_KEYMAKER_BASENAME = "matrix-keymaker"
+
+
+def normalize_operating_system(value: str) -> str:
+    normalized = str(value).strip().casefold()
+    return {
+        "darwin": "macos",
+        "mac": "macos",
+        "macos": "macos",
+        "linux": "linux",
+    }.get(normalized, normalized)
+
+
+def normalize_architecture(value: str) -> str:
+    normalized = str(value).strip().casefold().replace("-", "_")
+    return {
+        "aarch64": "arm64",
+        "arm64": "arm64",
+        "amd64": "x86_64",
+        "x64": "x86_64",
+        "x86_64": "x86_64",
+    }.get(normalized, normalized)
+
+
+def _deployment_path_basename(value: str) -> str:
+    return value.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1].casefold()
+
+
+def _is_separate_keymaker_deployment(value: str) -> bool:
+    return _deployment_path_basename(value) == _LEGACY_KEYMAKER_BASENAME
+
+
+def _migrate_legacy_deployment_path(value: str) -> str:
+    """Map the former Keymaker-only checkout/runtime to the MATRIX deployment."""
+
+    if not _is_separate_keymaker_deployment(value):
+        return value
+    normalized = value.rstrip("/\\")
+    replacement = "MATRIX" if normalized.rsplit("/", 1)[-1][:1].isupper() else "matrix"
+    parent, separator, _name = normalized.rpartition("/")
+    return f"{parent}{separator}{replacement}" if separator else replacement
 
 
 def _utc_now() -> str:
@@ -101,10 +146,41 @@ class MachineLimits:
 
 
 @dataclass(frozen=True)
+class RuntimeMachine:
+    """Observed identity and hardware facts for the process running MATRIX."""
+
+    node_name: str
+    hostname: str
+    operating_system: str
+    operating_system_release: str
+    architecture: str
+    processor: str
+    python_version: str
+    python_abi: str
+    limits: MachineLimits
+    schema: str = RUNTIME_MACHINE_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != RUNTIME_MACHINE_SCHEMA:
+            raise ValueError(f"unsupported runtime-machine schema: {self.schema}")
+        if not self.node_name or not self.hostname:
+            raise ValueError("runtime machine requires node and host names")
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class RemoteMachine:
     name: str
     host: str
-    remote_root: str = "~/matrix"
+    remote_root: str = "~/MATRIX"
+    qm_root: str = "~/matrix"
+    runtime_venv: str = "~/.venvs/matrix"
+    runtime_config_dir: str = "~/.config/matrix"
+    expected_operating_system: str = ""
+    expected_architecture: str = ""
+    expected_python_abi: str = ""
     enabled: bool = True
     limits: MachineLimits = field(default_factory=MachineLimits)
     engines: tuple[str, ...] = ()
@@ -116,8 +192,26 @@ class RemoteMachine:
             raise ValueError("remote machine name is required")
         if not self.host.strip():
             raise ValueError("remote machine SSH host is required")
+        for label, value in (
+            ("remote_root", self.remote_root),
+            ("qm_root", self.qm_root),
+            ("runtime_venv", self.runtime_venv),
+            ("runtime_config_dir", self.runtime_config_dir),
+        ):
+            if not value.strip():
+                raise ValueError(f"{label} is required")
+            if _is_separate_keymaker_deployment(value):
+                raise ValueError(
+                    f"{label} cannot use a Keymaker-only deployment; "
+                    "Keymaker must use the MATRIX checkout, virtualenv and configuration"
+                )
         engines = {item.strip().casefold() for item in self.engines if item.strip()}
         object.__setattr__(self, "engines", tuple(sorted(engines)))
+        operating_system = normalize_operating_system(self.expected_operating_system)
+        architecture = normalize_architecture(self.expected_architecture)
+        object.__setattr__(self, "expected_operating_system", operating_system)
+        object.__setattr__(self, "expected_architecture", architecture)
+        object.__setattr__(self, "expected_python_abi", self.expected_python_abi.strip().casefold())
 
 
 @dataclass(frozen=True)
@@ -136,12 +230,30 @@ class MatrixEnvironment:
             raise ValueError(f"unsupported MATRIX environment schema: {self.schema}")
         if not self.matrix_root.strip() or not self.projects_root.strip():
             raise ValueError("MATRIX and project roots are required")
+        if _is_separate_keymaker_deployment(self.matrix_root):
+            raise ValueError(
+                "matrix_root cannot be a Keymaker-only checkout; Keymaker is part of MATRIX"
+            )
         program_keys = [program.key for program in self.programs]
         if len(program_keys) != len(set(program_keys)):
             raise ValueError("external program keys must be unique")
-        machine_names = [machine.name for machine in self.remote_machines]
+        machine_names = [machine.name.strip().casefold() for machine in self.remote_machines]
+        machine_hosts = [machine.host.strip().casefold() for machine in self.remote_machines]
         if len(machine_names) != len(set(machine_names)):
             raise ValueError("remote machine names must be unique")
+        if len(machine_hosts) != len(set(machine_hosts)):
+            raise ValueError("remote machine SSH aliases must be unique")
+        identifier_owners: dict[str, int] = {}
+        for index, machine in enumerate(self.remote_machines):
+            for identifier in {
+                machine.name.strip().casefold(),
+                machine.host.strip().casefold(),
+            }:
+                owner = identifier_owners.setdefault(identifier, index)
+                if owner != index:
+                    raise ValueError(
+                        "remote machine names and SSH aliases must not overlap across machines"
+                    )
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -171,9 +283,12 @@ class MatrixEnvironment:
                 raise ValueError("remote machine limits must be an object")
             item["limits"] = MachineLimits(**dict(limits))
             item["engines"] = tuple(item.get("engines", ()))
+            for key in ("remote_root", "qm_root", "runtime_venv", "runtime_config_dir"):
+                if key in item:
+                    item[key] = _migrate_legacy_deployment_path(str(item[key]))
             machines.append(RemoteMachine(**item))
         return cls(
-            matrix_root=str(data["matrix_root"]),
+            matrix_root=_migrate_legacy_deployment_path(str(data["matrix_root"])),
             projects_root=str(data["projects_root"]),
             programs=programs,
             local_limits=MachineLimits(**dict(raw_local)),
@@ -186,6 +301,43 @@ class MatrixEnvironment:
     def program(self, key: str) -> ExternalProgram | None:
         normalized = key.strip().casefold()
         return next((item for item in self.programs if item.key == normalized), None)
+
+    def remote_machine(
+        self,
+        identifier: str = "",
+        *,
+        engine: str = "",
+    ) -> RemoteMachine:
+        """Resolve one enabled remote by logical name or its configured SSH alias."""
+
+        normalized_identifier = str(identifier).strip().casefold()
+        normalized_engine = str(engine).strip().casefold()
+        normalized_engine = {"gdv32": "gdv"}.get(normalized_engine, normalized_engine)
+        candidates = tuple(machine for machine in self.remote_machines if machine.enabled)
+        if normalized_identifier:
+            candidates = tuple(
+                machine
+                for machine in candidates
+                if normalized_identifier
+                in {machine.name.strip().casefold(), machine.host.strip().casefold()}
+            )
+            if not candidates:
+                raise ValueError(
+                    f"remote machine {identifier!r} is not an enabled logical name or SSH alias "
+                    "in the MATRIX environment"
+                )
+        if normalized_engine:
+            candidates = tuple(
+                machine for machine in candidates if normalized_engine in machine.engines
+            )
+            if not candidates:
+                qualifier = f" {identifier!r}" if normalized_identifier else ""
+                raise ValueError(
+                    f"no enabled MATRIX remote{qualifier} provides engine {engine!r}"
+                )
+        if not candidates:
+            raise ValueError("the MATRIX environment has no enabled remote machines")
+        return candidates[0]
 
 
 def resolve_program_path(value: str) -> str:
@@ -202,9 +354,13 @@ def detect_external_programs() -> tuple[ExternalProgram, ...]:
     programs: list[ExternalProgram] = []
     for key, label, category, candidates in PROGRAM_DEFINITIONS:
         detected = ""
+        variable = PROGRAM_ENVIRONMENT.get(key, "")
+        configured = os.environ.get(variable, "").strip() if variable else ""
+        if configured:
+            detected = resolve_program_path(configured)
         if sys.platform == "darwin" and key in _MACOS_APPLICATIONS:
             application = _MACOS_APPLICATIONS[key]
-            if application.exists():
+            if not detected and application.exists():
                 detected = str(application)
         if not detected:
             for candidate in candidates:
@@ -216,7 +372,9 @@ def detect_external_programs() -> tuple[ExternalProgram, ...]:
 
 
 def detect_local_limits() -> MachineLimits:
-    processors = os.cpu_count() or 1
+    processors = (
+        _positive_int_environment("MATRIX_LOCAL_PROCESSORS") or os.cpu_count() or 1
+    )
     memory_bytes = 0
     if sys.platform == "darwin":
         try:
@@ -229,13 +387,88 @@ def detect_local_limits() -> MachineLimits:
             if line.startswith("MemTotal:"):
                 memory_bytes = int(line.split()[1]) * 1024
                 break
-    memory_gb = round(memory_bytes / (1024**3), 1) if memory_bytes else 1.0
+    configured_memory = _positive_float_environment("MATRIX_LOCAL_MEMORY_GB")
+    memory_gb = configured_memory or (
+        round(memory_bytes / (1024**3), 1) if memory_bytes else 1.0
+    )
+    gpu_count = _nonnegative_int_environment("MATRIX_LOCAL_GPU_COUNT")
+    neural_engine_count = _nonnegative_int_environment(
+        "MATRIX_LOCAL_NEURAL_ENGINE_COUNT"
+    )
+    max_jobs = _positive_int_environment("MATRIX_LOCAL_MAX_JOBS")
     return MachineLimits(
         processors=processors,
         memory_gb=max(1.0, memory_gb),
-        neural_engine_count=_detect_apple_neural_engine_count(),
-        max_concurrent_jobs=max(1, min(4, processors // 2)),
+        gpu_count=_detect_gpu_count() if gpu_count is None else gpu_count,
+        neural_engine_count=(
+            _detect_apple_neural_engine_count()
+            if neural_engine_count is None
+            else neural_engine_count
+        ),
+        max_concurrent_jobs=max_jobs or max(1, min(4, processors // 2)),
     )
+
+
+def _positive_int_environment(name: str) -> int | None:
+    text = os.environ.get(name, "").strip()
+    if not text:
+        return None
+    try:
+        value = int(text)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _nonnegative_int_environment(name: str) -> int | None:
+    text = os.environ.get(name, "").strip()
+    if not text:
+        return None
+    try:
+        value = int(text)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
+def _positive_float_environment(name: str) -> float | None:
+    text = os.environ.get(name, "").strip()
+    if not text:
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _detect_gpu_count() -> int:
+    if sys.platform.startswith("linux"):
+        executable = shutil.which("nvidia-smi")
+        if executable:
+            try:
+                output = subprocess.check_output(
+                    (executable, "-L"), text=True, timeout=5
+                )
+                count = sum(1 for line in output.splitlines() if line.strip())
+                if count:
+                    return count
+            except (OSError, subprocess.SubprocessError):
+                pass
+        return 1 if Path("/dev/kfd").exists() else 0
+    if sys.platform == "darwin":
+        try:
+            output = subprocess.check_output(
+                ("system_profiler", "SPDisplaysDataType", "-json"),
+                text=True,
+                timeout=5,
+            )
+            payload = json.loads(output)
+            displays = payload.get("SPDisplaysDataType", ())
+            return len(displays) if isinstance(displays, list) else 0
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+            return 0
+    return 0
 
 
 def _detect_apple_neural_engine_count() -> int:
@@ -248,6 +481,88 @@ def _detect_apple_neural_engine_count() -> int:
     except (OSError, subprocess.SubprocessError):
         return 0
     return 1 if output.strip() == "1" else 0
+
+
+def detect_runtime_machine(
+    *,
+    node_name: str | None = None,
+    hostname: str | None = None,
+    operating_system: str | None = None,
+    operating_system_release: str | None = None,
+    architecture: str | None = None,
+    processor: str | None = None,
+    limits: MachineLimits | None = None,
+) -> RuntimeMachine:
+    """Inspect this node without assigning host-specific scientific behavior."""
+
+    observed_hostname = str(hostname or platform.node() or "localhost").strip()
+    observed_node = str(
+        node_name or os.environ.get("MATRIX_NODE_NAME") or observed_hostname
+    ).strip()
+    return RuntimeMachine(
+        node_name=observed_node,
+        hostname=observed_hostname,
+        operating_system=normalize_operating_system(
+            operating_system or platform.system()
+        ),
+        operating_system_release=str(
+            operating_system_release or platform.release()
+        ).strip(),
+        architecture=normalize_architecture(architecture or platform.machine()),
+        processor=str(processor or platform.processor()).strip(),
+        python_version=platform.python_version(),
+        python_abi=sys.implementation.cache_tag or "",
+        limits=limits or detect_local_limits(),
+    )
+
+
+def refresh_runtime_environment(
+    environment: MatrixEnvironment,
+    *,
+    machine: RuntimeMachine | None = None,
+    detected_programs: tuple[ExternalProgram, ...] | None = None,
+) -> MatrixEnvironment:
+    """Combine persistent policy with facts observed on the current node."""
+
+    observed = machine or detect_runtime_machine()
+    detected = {
+        item.key: item for item in (detected_programs or detect_external_programs())
+    }
+    programs: list[ExternalProgram] = []
+    for stored in environment.programs:
+        current = detected.pop(stored.key, None)
+        explicit = resolve_program_path(stored.executable)
+        executable = explicit or (current.executable if current is not None else "")
+        programs.append(
+            ExternalProgram(
+                stored.key,
+                stored.label,
+                stored.category,
+                executable,
+                stored.enabled and bool(executable),
+            )
+        )
+    programs.extend(detected.values())
+    limits = MachineLimits(
+        processors=observed.limits.processors,
+        memory_gb=observed.limits.memory_gb,
+        gpu_count=observed.limits.gpu_count,
+        neural_engine_count=observed.limits.neural_engine_count,
+        max_concurrent_jobs=min(
+            observed.limits.max_concurrent_jobs,
+            environment.local_limits.max_concurrent_jobs,
+        ),
+    )
+    return MatrixEnvironment(
+        matrix_root=environment.matrix_root,
+        projects_root=environment.projects_root,
+        programs=tuple(programs),
+        local_limits=limits,
+        remote_machines=environment.remote_machines,
+        schema=environment.schema,
+        created_utc=environment.created_utc,
+        updated_utc=environment.updated_utc,
+    )
 
 
 def default_environment(
@@ -276,6 +591,35 @@ def load_environment(
     return MatrixEnvironment.from_dict(json.loads(target.read_text(encoding="utf-8")))
 
 
+def load_runtime_environment(
+    path: Path | str = DEFAULT_CONFIG_PATH,
+    *,
+    missing_ok: bool = False,
+) -> MatrixEnvironment:
+    """Load persistent policy and refresh all local machine facts."""
+
+    return refresh_runtime_environment(load_environment(path, missing_ok=missing_ok))
+
+
+def configured_remote_machine(
+    identifier: str = "",
+    *,
+    engine: str = "",
+    path: Path | str | None = None,
+) -> RemoteMachine:
+    """Resolve a remote solely through the canonical MATRIX environment profile."""
+
+    config_path = path or os.environ.get("MATRIX_CONFIG") or DEFAULT_CONFIG_PATH
+    requested = str(identifier).strip() or os.environ.get("MATRIX_REMOTE_MACHINE", "").strip()
+    if not requested:
+        requested = os.environ.get("MATRIX_REMOTE_HOST", "").strip()
+    return load_environment(config_path).remote_machine(requested, engine=engine)
+
+
+def runtime_machine_schema_path() -> Path:
+    return Path(__file__).resolve().parent / "schemas" / "runtime-machine-v1.schema.json"
+
+
 def write_environment(
     environment: MatrixEnvironment, path: Path | str = DEFAULT_CONFIG_PATH
 ) -> Path:
@@ -283,9 +627,7 @@ def write_environment(
     target.parent.mkdir(parents=True, exist_ok=True)
     data = environment.to_dict()
     data["updated_utc"] = _utc_now()
-    temporary = target.with_suffix(target.suffix + ".tmp")
-    temporary.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(target)
+    atomic_json_write(target, data)
     return target
 
 
@@ -296,6 +638,9 @@ def environment_exports(
         "MATRIX_CONFIG": str(Path(config_path).expanduser().resolve()),
         "MATRIX_HOME": str(Path(environment.matrix_root).expanduser().resolve()),
         "MATRIX_PROJECTS_DIR": str(Path(environment.projects_root).expanduser().resolve()),
+        "MATRIX_NODE_NAME": detect_runtime_machine(limits=environment.local_limits).node_name,
+        "MATRIX_OPERATING_SYSTEM": normalize_operating_system(platform.system()),
+        "MATRIX_ARCHITECTURE": normalize_architecture(platform.machine()),
         "MATRIX_LOCAL_PROCESSORS": str(environment.local_limits.processors),
         "MATRIX_LOCAL_MEMORY_GB": str(environment.local_limits.memory_gb),
         "MATRIX_LOCAL_GPU_COUNT": str(environment.local_limits.gpu_count),
@@ -319,8 +664,15 @@ def environment_exports(
         primary = enabled_remotes[0]
         exports.update(
             {
+                "MATRIX_REMOTE_MACHINE": primary.name,
                 "MATRIX_REMOTE_HOST": primary.host,
                 "MATRIX_REMOTE_ROOT": primary.remote_root,
+                "MATRIX_REMOTE_QM_ROOT": primary.qm_root,
+                "MATRIX_REMOTE_VENV": primary.runtime_venv,
+                "MATRIX_REMOTE_CONFIG_DIR": primary.runtime_config_dir,
+                "MATRIX_REMOTE_EXPECTED_OS": primary.expected_operating_system,
+                "MATRIX_REMOTE_EXPECTED_ARCHITECTURE": primary.expected_architecture,
+                "MATRIX_REMOTE_EXPECTED_PYTHON_ABI": primary.expected_python_abi,
                 "MATRIX_REMOTE_PROCESSORS": str(primary.limits.processors),
                 "MATRIX_REMOTE_MEMORY_GB": str(primary.limits.memory_gb),
                 "MATRIX_REMOTE_GPU_COUNT": str(primary.limits.gpu_count),

@@ -7,6 +7,9 @@ import json
 
 import numpy as np
 
+from matrix_chem.symmetry import cartesian_operation_matrix
+from matrix_numerics import numerical_matrix_rank
+
 from matrix_chem.geometry_io import read_xyz_atoms_coords
 from matrix_chem.topology.elements import atomic_number, atomic_symbol
 from matrix_chem.topology.pipeline import build_topology_objects
@@ -116,11 +119,11 @@ def _parse_gic_line(line: str) -> GICLine | None:
         return None
     number = r"[+-]?\s*(?:\d+(?:\.\d*)?|\.\d+)(?:[EDed][+-]?\d+)?"
     terms: list[tuple[float, Primitive]] = []
-    for match in re.finditer(rf"({number})\s*\*\s*([RADLU])\(([^)]*)\)", rhs):
+    for match in re.finditer(rf"({number})\s*\*\s*([RADLUH])\(([^)]*)\)", rhs):
         coeff = float(match.group(1).replace(" ", "").replace("D", "E").replace("d", "e"))
         terms.append((coeff, _primitive(match.group(2), match.group(3))))
     if not terms:
-        simple = re.search(r"\b([RADLU])\(([^)]*)\)", rhs)
+        simple = re.search(r"\b([RADLUH])\(([^)]*)\)", rhs)
         if simple:
             terms.append((1.0, _primitive(simple.group(1), simple.group(2))))
     if not terms:
@@ -139,9 +142,12 @@ def _primitive(kind: str, atoms_text: str) -> Primitive:
         return Primitive("dihedral", atoms)
     if kind == "U" and len(atoms) == 4:
         return Primitive("out_of_plane", atoms)
+    if kind == "H" and len(atoms) == 4:
+        return Primitive("out_of_plane_height", atoms)
     if kind == "L" and len(values) == 5:
         mode = values[4] if values[4] in {-1, -2} else -1
-        return Primitive("linear_bend", atoms[:3], mode=mode)
+        ref = (values[3] - 1,) if values[3] > 0 else ()
+        return Primitive("linear_bend", atoms[:3], mode=mode, ref=ref)
     raise ValueError(f"Unsupported GIC primitive {kind}({atoms_text})")
 
 
@@ -220,7 +226,14 @@ def _symmetry_adapted_gics(
     projection_blocks = _projection_blocks(atoms, coords, prims)
     class_targets = _class_counts(u_matrix, prims)
     irrep_order = {irrep: idx for idx, (irrep, _chars) in enumerate(irreps)}
-    class_order = {"bond": 0, "angle": 1, "linear_bend": 2, "dihedral": 3, "out_of_plane": 4}
+    class_order = {
+        "bond": 0,
+        "angle": 1,
+        "linear_bend": 2,
+        "dihedral": 3,
+        "out_of_plane": 4,
+        "out_of_plane_height": 4,
+    }
     candidates = []
     for col, source_row in enumerate(source_rows):
         kind = _dominant_kind(u_matrix[:, col], prims)
@@ -416,7 +429,10 @@ def _class_counts(u_matrix: np.ndarray, prims: list[Primitive]) -> dict[str, int
 def _rank_capacity(rows: list[np.ndarray]) -> int:
     if not rows:
         return 0
-    return int(np.linalg.matrix_rank(np.vstack(rows), tol=RANK_TOL))
+    return numerical_matrix_rank(
+        np.vstack(rows),
+        absolute_tolerance=RANK_TOL,
+    )
 
 
 def _rank_limited_class_targets(
@@ -582,26 +598,6 @@ def _remaining_capacity_sufficient(
     return True
 
 
-def _source_column_order(
-    irrep: str,
-    u_matrix: np.ndarray,
-    prims: list[Primitive],
-    selected_classes: dict[str, int],
-    class_targets: dict[str, int],
-) -> list[int]:
-    if irrep in {"A1", "A", "Ag", "A'"}:
-        return list(range(u_matrix.shape[1]))
-    class_order = {"bond": 0, "angle": 1, "linear_bend": 2, "dihedral": 3, "out_of_plane": 4}
-
-    def key(col: int) -> tuple[int, int, int]:
-        kind = _dominant_kind(u_matrix[:, col], prims)
-        remaining = class_targets.get(kind, 0) - selected_classes.get(kind, 0)
-        return (-remaining, class_order.get(kind, 9), col)
-
-    return sorted(
-        range(u_matrix.shape[1]),
-        key=key,
-    )
 
 
 def _projection_blocks(
@@ -634,7 +630,7 @@ def _projection_blocks(
         idxs = {
             idx
             for idx, prim in enumerate(prims)
-            if prim.kind in {"dihedral", "out_of_plane"}
+            if prim.kind in {"dihedral", "out_of_plane", "out_of_plane_height"}
             and _oop_local_member(prim, center, local_atoms, adjacency)
         }
         _append_block(blocks, seen, f"oop_local_{center + 1}", idxs)
@@ -660,7 +656,7 @@ def _ring_mixed_member(prim: Primitive, ring_atoms: set[int], adjacency: list[se
     atoms = set(prim.atoms)
     if atoms.issubset(ring_atoms):
         return True
-    if prim.kind not in {"dihedral", "out_of_plane"}:
+    if prim.kind not in {"dihedral", "out_of_plane", "out_of_plane_height"}:
         return False
     if len(atoms & ring_atoms) < 3:
         return False
@@ -674,8 +670,8 @@ def _oop_local_member(
     atoms = set(prim.atoms)
     if not atoms.issubset(local_atoms):
         return False
-    if prim.kind == "out_of_plane":
-        return len(prim.atoms) >= 2 and prim.atoms[1] == center
+    if prim.kind in {"out_of_plane", "out_of_plane_height"}:
+        return len(prim.atoms) >= 1 and prim.atoms[0] == center
     if prim.kind != "dihedral":
         return False
     return (
@@ -704,13 +700,10 @@ def _canonical_operation_order(op_data):
 
 
 def _cartesian_operation(rotation: np.ndarray, mapping: tuple[int, ...], natoms: int) -> np.ndarray:
-    matrix = np.zeros((3 * natoms, 3 * natoms), dtype=float)
     # The detector returns i -> j such that x_i matches R x_j; for row
     # gradients this block form applies the same operation in the oriented
     # Cartesian frame.
-    for i, j in enumerate(mapping):
-        matrix[3 * i : 3 * i + 3, 3 * j : 3 * j + 3] = rotation
-    return matrix
+    return cartesian_operation_matrix(rotation, mapping, natoms=natoms)
 
 
 def _project_cartesian_row(
@@ -898,7 +891,14 @@ def _write_gic_symmetry_diagnostics(
                 for _name, row_irrep, _source, column in sym_gics
                 if row_irrep == irrep
             ]
-            b_ranks[irrep] = int(np.linalg.matrix_rank(np.array(rows), tol=RANK_TOL)) if rows else 0
+            b_ranks[irrep] = (
+                numerical_matrix_rank(
+                    np.array(rows),
+                    absolute_tolerance=RANK_TOL,
+                )
+                if rows
+                else 0
+            )
     payload = {
         "schema": "oracle.gic_symmetry.v1",
         "symmetry_backend": symmetry_backend,
@@ -1156,8 +1156,14 @@ def _primitive_expression(primitive: Primitive) -> str:
         return f"D({atoms[0]:3d},{atoms[1]:3d},{atoms[2]:3d},{atoms[3]:3d})"
     if primitive.kind == "out_of_plane":
         return f"U({atoms[0]:3d},{atoms[1]:3d},{atoms[2]:3d},{atoms[3]:3d})"
+    if primitive.kind == "out_of_plane_height":
+        return f"H({atoms[0]:3d},{atoms[1]:3d},{atoms[2]:3d},{atoms[3]:3d})"
     if primitive.kind == "linear_bend":
-        return f"L({atoms[0]:3d},{atoms[1]:3d},{atoms[2]:3d},  0,{primitive.mode:3d})"
+        reference = primitive.ref[0] + 1 if len(primitive.ref) == 1 else 0
+        return (
+            f"L({atoms[0]:3d},{atoms[1]:3d},{atoms[2]:3d},"
+            f"{reference:3d},{primitive.mode:3d})"
+        )
     raise ValueError(f"Unsupported primitive kind: {primitive.kind}")
 
 

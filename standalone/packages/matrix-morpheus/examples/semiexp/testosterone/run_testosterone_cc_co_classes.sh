@@ -4,7 +4,7 @@ set -eu
 BASE='packages/matrix-morpheus/examples/semiexp/testosterone'
 OUT='working/semiexp/testosterone_cc_co_classes'
 
-python -m matrix semiexp \
+matrix semiexp \
   --xyz "$BASE/testosterone_DPCS3.xyz" \
   --observations "$BASE/isotopologues.toml" \
   --xyzin "$OUT/xyzin" \

@@ -1,7 +1,7 @@
-"""LINK external-gradient geometry optimization and PES contracts.
+"""TRINITY molecular vibrational and anharmonic-field services.
 
-The package name and #TRINITY section are retained for compatibility until the
-optimization/PES layer is physically split or renamed.
+Legacy optimizer and point-evaluation imports are compatibility aliases whose
+implementations now live in :mod:`matrix_link`.
 """
 
 from .workflow import (
@@ -91,6 +91,16 @@ from .multilevel import (
     optimize_from_smiles_multilevel,
     write_optimization_report,
 )
+from .initialization_workflow import (
+    INITIALIZATION_WORKFLOW_REQUEST_SCHEMA,
+    INITIALIZATION_WORKFLOW_RESULT_SCHEMA,
+    InitializationStageResult,
+    InitializationWorkflowRequest,
+    InitializationWorkflowResult,
+    initialization_request_from_dict,
+    plan_initialization_stages,
+    run_initialization_workflow,
+)
 from .fragment_oniom import (
     FRAGMENT_ONIOM_SCHEMA,
     CartesianEvaluation,
@@ -122,6 +132,7 @@ from .external_driver import (
     LINK_EXTERNAL_DRIVER_TRACE_SCHEMA,
     ExternalDriverPoint,
     ExternalDriverResult,
+    geometry_filter_rejection,
     run_external_driver_loop,
 )
 from .active_variables import (
@@ -140,19 +151,46 @@ from .anharmonic_sampling import (
     SemiDiagonalCubicField,
     semidiagonal_cubic_from_modal_gradient_stencil,
 )
+from .anharmonic_fields import (
+    build_normal_mode_anharmonic_field,
+    build_normal_mode_anharmonic_field_from_architect,
+)
 from .isotopic_internal_qff import (
     NonredundantInternalCubicField,
     internal_cubic_from_parent_normal_field,
     normal_cubic_from_internal_field,
 )
 from .curvilinear_rovib import (
+    CARTESIAN_GRADIENT_DELTABVIB_METHOD,
+    CARTESIAN_HESSIAN_DELTABVIB_METHOD,
     CURVILINEAR_DELTABVIB_SCHEMA,
+    CallableDeltaBVibJob,
     CurvilinearAlphaComponents,
+    CurvilinearDeltaBVibJob as MethodAwareCurvilinearDeltaBVibJob,
     CurvilinearDeltaBVibResult,
+    CurvilinearIsotopologueDefinition,
+    CurvilinearIsotopologueState,
+    SONIC_GRADIENT_DELTABVIB_METHOD,
+    SONIC_HESSIAN_DELTABVIB_METHOD,
+    SONIC_INTERNAL_DELTABVIB_METHOD,
+    TrinityDeltaBVibMethod,
+    TrinityDeltaBVibService,
+    curvilinear_alpha_from_internal_field,
     curvilinear_deltabvib_from_alpha,
+    curvilinear_deltabvib_from_internal_field,
+    curvilinear_deltabvib_for_isotopologues,
+    curvilinear_deltabvib_from_definitions,
+    curvilinear_isotopologue_state_from_internal_field,
     curvilinear_deltabvib_from_dict,
     curvilinear_deltabvib_to_dict,
     read_curvilinear_deltabvib_results,
+    write_curvilinear_deltabvib_results,
+    write_curvilinear_deltabvib_to_xyzin,
+)
+from .deltabvib_service import (
+    CurvilinearDeltaBVibJob,
+    TrinityDeltaBVibCorrection,
+    TrinityDeltaBVibService as PersistentTrinityDeltaBVibService,
 )
 from .dual_representation import (
     CartesianSpectroscopicChannel,
@@ -173,6 +211,8 @@ from .sentinel_protocol import (
 
 __all__ = [
     "ANGSTROM_TO_BOHR",
+    "build_normal_mode_anharmonic_field",
+    "build_normal_mode_anharmonic_field_from_architect",
     "BOHR_TO_ANGSTROM",
     "LINK_LONG_NAME",
     "LINK_ACTIVE_VARIABLES_SCHEMA",
@@ -267,12 +307,33 @@ __all__ = [
     "internal_cubic_from_parent_normal_field",
     "normal_cubic_from_internal_field",
     "CURVILINEAR_DELTABVIB_SCHEMA",
+    "CARTESIAN_GRADIENT_DELTABVIB_METHOD",
+    "CARTESIAN_HESSIAN_DELTABVIB_METHOD",
+    "CallableDeltaBVibJob",
     "CurvilinearAlphaComponents",
+    "CurvilinearDeltaBVibJob",
+    "MethodAwareCurvilinearDeltaBVibJob",
     "CurvilinearDeltaBVibResult",
+    "TrinityDeltaBVibCorrection",
+    "PersistentTrinityDeltaBVibService",
+    "CurvilinearIsotopologueDefinition",
+    "CurvilinearIsotopologueState",
+    "SONIC_GRADIENT_DELTABVIB_METHOD",
+    "SONIC_HESSIAN_DELTABVIB_METHOD",
+    "SONIC_INTERNAL_DELTABVIB_METHOD",
+    "TrinityDeltaBVibMethod",
+    "TrinityDeltaBVibService",
+    "curvilinear_alpha_from_internal_field",
     "curvilinear_deltabvib_from_alpha",
+    "curvilinear_deltabvib_from_internal_field",
+    "curvilinear_deltabvib_for_isotopologues",
+    "curvilinear_deltabvib_from_definitions",
+    "curvilinear_isotopologue_state_from_internal_field",
     "curvilinear_deltabvib_from_dict",
     "curvilinear_deltabvib_to_dict",
     "read_curvilinear_deltabvib_results",
+    "write_curvilinear_deltabvib_results",
+    "write_curvilinear_deltabvib_to_xyzin",
     "prepare_pes_exploration_geometry",
     "prepare_trinity_section",
     "read_point_result",
@@ -287,11 +348,20 @@ __all__ = [
     "optimizer_result_to_json",
     "optimization_level_from_json",
     "optimize_from_smiles_multilevel",
+    "INITIALIZATION_WORKFLOW_REQUEST_SCHEMA",
+    "INITIALIZATION_WORKFLOW_RESULT_SCHEMA",
+    "InitializationStageResult",
+    "InitializationWorkflowRequest",
+    "InitializationWorkflowResult",
+    "initialization_request_from_dict",
+    "plan_initialization_stages",
+    "run_initialization_workflow",
     "write_optimization_report",
     "read_optimizer_hessian",
     "read_optimization_input",
     "run_external_scan_points",
     "run_external_driver_loop",
+    "geometry_filter_rejection",
     "run_optimizer_validation_benchmark",
     "run_qm_scan_points",
     "run_optimization_input",

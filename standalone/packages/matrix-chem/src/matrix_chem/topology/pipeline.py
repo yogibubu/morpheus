@@ -76,8 +76,9 @@ def build_topology_objects(
     ) == set(range(len(Z)))
     selected_orders = candidate_orders if qm_observables_complete else {}
     selected_charges = candidate_charges if qm_observables_complete else {}
-    cg = ContinuousGraph(coords, Z, bond_order_overrides=selected_orders)
-    dg = DiscreteGraph(cg)
+    if selected_orders:
+        cg = ContinuousGraph(coords, Z, bond_order_overrides=selected_orders)
+        dg = DiscreteGraph(cg)
 
     # --------------------------------------------------------
     # Ring detection
@@ -92,6 +93,7 @@ def build_topology_objects(
         Z=cg.Z,
         coords=cg.coords,
         neighbors=neighbors,
+        coordination_numbers=cg.coordination_numbers,
     )
     synthons._external_charges = selected_charges or None
     synthons._external_bond_orders = selected_orders or None
@@ -114,3 +116,12 @@ def build_topology_objects(
     )
 
     return cg, dg, ringset, synthons, aromaticity
+
+
+def perceive_aromatic_ring_atoms(coords, Z) -> tuple[tuple[int, ...], ...]:
+    """Return geometry-first aromatic rings as zero-based atom tuples."""
+    *_, aromaticity = build_topology_objects(coords, Z)
+    return tuple(
+        tuple(int(atom) for atom in assignment.atoms)
+        for assignment in aromaticity.assignments
+    )

@@ -9,7 +9,7 @@ from matrix_chem.topology.pipeline import build_topology_objects
 from matrix_smith.survibfit.primitives import Primitive, eval_primitives
 
 from .contracts import QMParameterPredicate
-from .legacy.merlino_core.parameters.bdpcs3 import load_bdpcs3_parameters
+from .parameters.bdpcs3 import load_bdpcs3_parameters
 
 
 DEFAULT_INITIAL_GEOMETRY_PREDICATE_SCOPE = (
@@ -203,11 +203,11 @@ def initial_geometry_predicates(
                 others = [item for item in neighbors if item != pivot]
                 for pos, left in enumerate(others):
                     for right in others[pos + 1 :]:
-                        primitive = Primitive("out_of_plane", (pivot, center, left, right))
+                        primitive = Primitive("out_of_plane", (center, left, right, pivot))
                         value = float(np.rad2deg(eval_primitives([primitive], coords)[0]))
                         predicates.append(
                             QMParameterPredicate(
-                                f"U({pivot + 1},{center + 1},{left + 1},{right + 1})",
+                                f"U({center + 1},{left + 1},{right + 1},{pivot + 1})",
                                 value,
                                 dihedral_sigma_degree,
                                 f"{source}_out_of_plane",

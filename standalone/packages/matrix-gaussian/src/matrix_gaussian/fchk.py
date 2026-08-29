@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import re
 
 import numpy as np
+
+from .modes import GAUSSIAN_MODE_CONVERSION_PROTOCOL, gaussian_cartesian_modes_to_mass_weighted
 
 BOHR_TO_ANGSTROM = 0.529177210903
 
@@ -31,6 +33,9 @@ class FCHKData:
     dipole_moment_au: np.ndarray
     dipole_derivatives_au_per_bohr: np.ndarray
     ir_intensities_km_mol: np.ndarray
+    cartesian_gradient_hartree_per_bohr: np.ndarray = field(
+        default_factory=lambda: np.array((), dtype=float)
+    )
     total_energy_hartree: float | None = None
     multiplicity: int | None = None
     alpha_orbital_energies_hartree: tuple[float, ...] = ()
@@ -64,6 +69,20 @@ class FCHKData:
         )
         data.validate()
         return data
+
+
+@dataclass(frozen=True)
+class GaussianFCHKPointResult:
+    """Geometry, energy, and analytic gradient from a formatted checkpoint.
+
+    Unlike :class:`FCHKData`, this deliberately has no vibrational-data
+    requirements and is therefore valid for an ordinary ``Force`` job.
+    """
+
+    atomic_numbers: np.ndarray
+    cartesian_coordinates_bohr: np.ndarray
+    cartesian_gradient_hartree_per_bohr: np.ndarray
+    total_energy_hartree: float | None
 
 
 @dataclass(frozen=True)
@@ -105,6 +124,7 @@ def read_gaussian_fchk(path: Path) -> FCHKData:
     mulliken_charges = _optional_array(blocks, "Mulliken Charges")
     dipole_moment = _optional_array(blocks, "Dipole Moment")
     dipole_derivatives = _optional_array(blocks, "Dipole Derivatives")
+    cartesian_gradient = _optional_array(blocks, "Cartesian Gradient")
 
     coordinate_count = 3 * len(atomic_numbers)
     mode_count = (
@@ -139,11 +159,31 @@ def read_gaussian_fchk(path: Path) -> FCHKData:
         dipole_moment_au=dipole_moment,
         dipole_derivatives_au_per_bohr=dipole_derivatives,
         ir_intensities_km_mol=ir_intensities,
+        cartesian_gradient_hartree_per_bohr=cartesian_gradient,
         total_energy_hartree=_optional_scalar(blocks, "Total Energy", "SCF Energy"),
         multiplicity=_optional_int_scalar(blocks, "Multiplicity"),
         alpha_orbital_energies_hartree=tuple(float(value) for value in alpha_orbital_energies),
         beta_orbital_energies_hartree=tuple(float(value) for value in beta_orbital_energies),
         has_total_scf_density="Total SCF Density" in blocks,
+    )
+
+
+def read_gaussian_fchk_point_result(path: Path) -> GaussianFCHKPointResult:
+    """Read the non-rounded point derivatives written by ``formchk``."""
+
+    blocks = _read_fchk_blocks(Path(path))
+    atomic_numbers = _first_array(blocks, "Atomic numbers").astype(int)
+    coordinates = _first_array(blocks, "Current cartesian coordinates").reshape((-1, 3))
+    gradient = _first_array(blocks, "Cartesian Gradient").reshape(-1)
+    if coordinates.shape != (len(atomic_numbers), 3):
+        raise ValueError("Gaussian FCHK Cartesian coordinates have the wrong dimension")
+    if gradient.shape != (3 * len(atomic_numbers),):
+        raise ValueError("Gaussian FCHK Cartesian gradient has the wrong dimension")
+    return GaussianFCHKPointResult(
+        atomic_numbers=atomic_numbers,
+        cartesian_coordinates_bohr=coordinates,
+        cartesian_gradient_hartree_per_bohr=gradient,
+        total_energy_hartree=_optional_scalar(blocks, "Total Energy", "SCF Energy"),
     )
 
 
@@ -230,6 +270,11 @@ def promote_gaussian_fchk_to_xyzin(
         wrote_hessian = True
     if write_normal_modes and data.normal_modes.size:
         coordinate_count = 3 * len(data.atomic_numbers)
+        mass_weighted_modes = gaussian_cartesian_modes_to_mass_weighted(
+            data.normal_modes,
+            data.masses_amu,
+            coordinate_count=coordinate_count,
+        )
         frequencies = (
             data.anharmonic_frequencies_cm
             if data.anharmonic_frequencies_cm.size
@@ -239,8 +284,8 @@ def promote_gaussian_fchk_to_xyzin(
             target,
             normal_modes_section_from_arrays(
                 frequencies,
-                data.normal_modes,
-                source="gaussian-fchk",
+                mass_weighted_modes,
+                source=f"gaussian-fchk; {GAUSSIAN_MODE_CONVERSION_PROTOCOL}",
                 coordinate_count=coordinate_count,
             ),
         )

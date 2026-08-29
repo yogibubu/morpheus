@@ -84,7 +84,7 @@ def write_microwave_literature_template(
     doi: str = "",
     source: str,
     locator: str,
-    extracted_by: str = "The ONE deterministic extraction",
+    extracted_by: str = "Keymaker deterministic extraction",
     isotopologues: list[dict] | None = None,
 ) -> Path:
     target = Path(path)

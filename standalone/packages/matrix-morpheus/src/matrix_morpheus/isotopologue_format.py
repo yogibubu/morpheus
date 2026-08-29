@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from matrix_core.isotopologues import (
+from matrix_chem.isotopologues import (
     format_substitutions,
     mass_number,
     parse_substitutions,

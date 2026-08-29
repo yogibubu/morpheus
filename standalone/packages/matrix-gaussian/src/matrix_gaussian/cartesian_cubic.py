@@ -8,6 +8,7 @@ import numpy as np
 
 from matrix_chem import MolecularGeometry
 
+from .archive import last_post_nimag_groups, number_array, unpack_symmetric_matrix
 from .parsers import read_gaussian_log_geometry
 from .writers import GaussianWriteError, write_gaussian_point_input
 
@@ -57,14 +58,14 @@ def read_gaussian_cartesian_cubic_force_field(
     text = target.read_text(encoding="utf-8", errors="replace")
     geometry = read_gaussian_log_geometry(target)
     dimension = 3 * geometry.natoms
-    groups = _last_post_nimag_archive_groups(text)
+    groups = last_post_nimag_groups(text)
     expected_hessian = dimension * (dimension + 1) // 2
     expected_cubic = dimension * (dimension + 1) * (dimension + 2) // 6
     if len(groups) < 3:
         raise ValueError("Gaussian archive does not contain Cartesian F2/gradient/F3 blocks")
-    packed_hessian = _number_array(groups[0])
-    gradient = _number_array(groups[1])
-    packed_cubic = _number_array(groups[2])
+    packed_hessian = number_array(groups[0])
+    gradient = number_array(groups[1])
+    packed_cubic = number_array(groups[2])
     if packed_hessian.size != expected_hessian:
         raise ValueError(
             f"Gaussian Cartesian Hessian size mismatch: expected {expected_hessian}, "
@@ -85,7 +86,7 @@ def read_gaussian_cartesian_cubic_force_field(
         path=target,
         geometry=geometry,
         gradient_hartree_per_bohr=gradient,
-        hessian_hartree_per_bohr2=_unpack_symmetric_matrix(packed_hessian, dimension),
+        hessian_hartree_per_bohr2=unpack_symmetric_matrix(packed_hessian, dimension),
         cubic_unique_indices=cubic_indices,
         cubic_unique_values_hartree_per_bohr3=cubic_values,
     )
@@ -115,45 +116,6 @@ def write_gaussian_cartesian_cubic_input(
         link0=link0,
         ensure_force=False,
     )
-
-
-def _last_post_nimag_archive_groups(text: str) -> tuple[str, ...]:
-    starts = [match.start() for match in re.finditer(r"1\\1\\GINC", text)]
-    for start in reversed(starts):
-        end = text.find(r"\@", start)
-        if end < 0:
-            continue
-        compact = re.sub(r"\s+", "", text[start : end + 2])
-        marker = re.search(r"\\NImag=-?\d+\\\\", compact)
-        if marker is None:
-            continue
-        body = compact[marker.end() :]
-        groups = tuple(item for item in body.split(r"\\") if item and item != "@")
-        if groups:
-            return groups
-    raise ValueError("Gaussian log contains no complete archive entry with NImag")
-
-
-def _number_array(text: str) -> np.ndarray:
-    if not text:
-        return np.empty(0, dtype=float)
-    try:
-        return np.asarray(
-            [float(item.replace("D", "E").replace("d", "e")) for item in text.split(",")],
-            dtype=float,
-        )
-    except ValueError as exc:
-        raise ValueError("invalid numeric value in Gaussian archive force field") from exc
-
-
-def _unpack_symmetric_matrix(values: np.ndarray, size: int) -> np.ndarray:
-    result = np.zeros((size, size), dtype=float)
-    cursor = 0
-    for i in range(size):
-        for j in range(i + 1):
-            result[i, j] = result[j, i] = values[cursor]
-            cursor += 1
-    return result
 
 
 def _packed_rank3_indices(values: np.ndarray, size: int) -> tuple[np.ndarray, np.ndarray]:

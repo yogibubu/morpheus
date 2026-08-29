@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass
+import math
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +11,8 @@ import numpy as np
 from matrix_core import read_sectioned_lines, section_content
 
 from .continuous_nonbonded import continuous_topology_scaled_pair_derivatives
+from .spatial_regions import bounded_topological_distances
+from .topology.covalent_radii import covalent_radius
 from .topology.vdw_radii import uff_vdw_radius, uff_well_depth_kcal
 
 
@@ -162,6 +164,10 @@ def nonbonded_cartesian_hessian_components(
     one_four_scale: float = 0.5,
     vdw_radius_scale: float = 1.0,
     vdw_well_depth_scale: float = 1.0,
+    vdw_damping_scale: float = 0.80,
+    vdw_damping_exponent: int = 24,
+    electrostatic_model: str = "topology_scaled_point_charges",
+    electrostatic_gaussian_width_scale: float = 1.0,
     topology_scaling: str = "continuous_erf_paths",
     topology_switch_alpha_per_angstrom: float = 8.0,
 ) -> NonbondedHessianComponents:
@@ -188,8 +194,16 @@ def nonbonded_cartesian_hessian_components(
     if not np.isfinite(well_depth_scale) or well_depth_scale <= 0.0:
         raise ValueError("van der Waals well-depth scale must be finite and positive")
     normalized_topology_scaling = str(topology_scaling).strip().lower()
-    if normalized_topology_scaling not in {"continuous_erf_paths", "discrete_graph"}:
-        raise ValueError("topology scaling must be continuous_erf_paths or discrete_graph")
+    if normalized_topology_scaling not in {
+        "collective_all_pairs",
+        "all_pairs_radial_damping",
+        "continuous_erf_paths",
+        "discrete_graph",
+    }:
+        raise ValueError(
+            "topology scaling must be collective_all_pairs, all_pairs_radial_damping, "
+            "continuous_erf_paths or discrete_graph"
+        )
     distances = None
     if normalized_topology_scaling == "discrete_graph":
         graph = _zero_based_graph(natoms, topology_bonds)
@@ -206,7 +220,22 @@ def nonbonded_cartesian_hessian_components(
         charge_values = np.asarray(charges, dtype=float).reshape(-1)
         if charge_values.size != natoms or np.any(~np.isfinite(charge_values)):
             raise ValueError("electrostatic Hessian correction requires one finite charge per atom")
-        if normalized_topology_scaling == "continuous_erf_paths":
+        normalized_electrostatic_model = str(electrostatic_model).strip().lower()
+        if normalized_electrostatic_model == "gaussian_erf_all_pairs":
+            electrostatic_energy, electrostatic_gradient, electrostatic_hessian = (
+                _gaussian_electrostatic_derivatives(
+                    coords,
+                    numbers,
+                    charge_values,
+                    width_scale=float(electrostatic_gaussian_width_scale),
+                )
+            )
+        elif normalized_electrostatic_model != "topology_scaled_point_charges":
+            raise ValueError(
+                "electrostatic model must be gaussian_erf_all_pairs or "
+                "topology_scaled_point_charges"
+            )
+        elif normalized_topology_scaling == "continuous_erf_paths":
 
             def electrostatic_factory(i: int, j: int, distance: float):
                 product = float(charge_values[i]) * float(charge_values[j])
@@ -238,8 +267,14 @@ def nonbonded_cartesian_hessian_components(
     uff_gradient = zero_gradient.copy()
     uff_hessian = zero_hessian.copy()
     normalized_vdw_model = str(vdw_model).strip().lower()
-    if normalized_vdw_model not in {"uff_12_6", "exppe_from_uff"}:
-        raise ValueError("vdW model must be uff_12_6 or exppe_from_uff")
+    if normalized_vdw_model not in {
+        "uff_12_6",
+        "exppe_from_uff",
+        "damped_exppe_from_uff",
+    }:
+        raise ValueError(
+            "vdW model must be uff_12_6, exppe_from_uff or damped_exppe_from_uff"
+        )
     if uff_vdw:
         if normalized_topology_scaling == "continuous_erf_paths":
 
@@ -247,6 +282,15 @@ def nonbonded_cartesian_hessian_components(
                 xij_bohr, dij_hartree = uff_pair_parameters(int(numbers[i]), int(numbers[j]))
                 xij_bohr *= radius_scale
                 dij_hartree *= well_depth_scale
+                if normalized_vdw_model == "damped_exppe_from_uff":
+                    return _damped_exppe_radial_derivative(
+                        distance,
+                        xij_bohr,
+                        dij_hartree,
+                        1.0,
+                        damping_scale=float(vdw_damping_scale),
+                        damping_exponent=int(vdw_damping_exponent),
+                    )
                 return (
                     _exppe_radial_derivative(distance, xij_bohr, dij_hartree, 1.0)
                     if normalized_vdw_model == "exppe_from_uff"
@@ -269,6 +313,8 @@ def nonbonded_cartesian_hessian_components(
                 vdw_model=normalized_vdw_model,
                 vdw_radius_scale=radius_scale,
                 vdw_well_depth_scale=well_depth_scale,
+                vdw_damping_scale=float(vdw_damping_scale),
+                vdw_damping_exponent=int(vdw_damping_exponent),
             )
     return NonbondedHessianComponents(
         electrostatic=_symmetrize(electrostatic_hessian),
@@ -325,6 +371,10 @@ def nonbonded_cartesian_hessian_correction(
     one_four_scale: float = 0.5,
     vdw_radius_scale: float = 1.0,
     vdw_well_depth_scale: float = 1.0,
+    vdw_damping_scale: float = 0.80,
+    vdw_damping_exponent: int = 24,
+    electrostatic_model: str = "topology_scaled_point_charges",
+    electrostatic_gaussian_width_scale: float = 1.0,
     topology_scaling: str = "continuous_erf_paths",
     topology_switch_alpha_per_angstrom: float = 8.0,
 ) -> np.ndarray:
@@ -340,6 +390,10 @@ def nonbonded_cartesian_hessian_correction(
         one_four_scale=one_four_scale,
         vdw_radius_scale=vdw_radius_scale,
         vdw_well_depth_scale=vdw_well_depth_scale,
+        vdw_damping_scale=vdw_damping_scale,
+        vdw_damping_exponent=vdw_damping_exponent,
+        electrostatic_model=electrostatic_model,
+        electrostatic_gaussian_width_scale=electrostatic_gaussian_width_scale,
         topology_scaling=topology_scaling,
         topology_switch_alpha_per_angstrom=topology_switch_alpha_per_angstrom,
     ).total
@@ -381,6 +435,8 @@ def _uff_vdw_derivatives(
     vdw_model: str,
     vdw_radius_scale: float,
     vdw_well_depth_scale: float,
+    vdw_damping_scale: float = 0.80,
+    vdw_damping_exponent: int = 24,
 ) -> tuple[float, np.ndarray, np.ndarray]:
     natoms = len(atomic_numbers)
     energy = 0.0
@@ -398,11 +454,19 @@ def _uff_vdw_derivatives(
             dij_hartree *= float(vdw_well_depth_scale)
             rvec = coordinates_bohr[i] - coordinates_bohr[j]
             r = _pair_distance(rvec, i, j)
-            radial = (
-                _exppe_radial_derivative(r, xij_bohr, dij_hartree, pair_scale)
-                if vdw_model == "exppe_from_uff"
-                else _uff_radial_derivative(r, xij_bohr, dij_hartree, pair_scale)
-            )
+            if vdw_model == "damped_exppe_from_uff":
+                radial = _damped_exppe_radial_derivative(
+                    r,
+                    xij_bohr,
+                    dij_hartree,
+                    pair_scale,
+                    damping_scale=vdw_damping_scale,
+                    damping_exponent=vdw_damping_exponent,
+                )
+            elif vdw_model == "exppe_from_uff":
+                radial = _exppe_radial_derivative(r, xij_bohr, dij_hartree, pair_scale)
+            else:
+                radial = _uff_radial_derivative(r, xij_bohr, dij_hartree, pair_scale)
             energy += radial.energy
             _accumulate_pair_derivatives(gradient, hessian, i, j, rvec, radial)
     return energy, gradient, hessian
@@ -417,6 +481,78 @@ def _electrostatic_radial_derivative(
     r = float(distance_bohr)
     factor = float(pair_scale) * float(charge_product)
     return _RadialDerivative(factor / r, -factor / r**2, 2.0 * factor / r**3)
+
+
+def _gaussian_electrostatic_derivatives(
+    coordinates_bohr: np.ndarray,
+    atomic_numbers: np.ndarray,
+    charges: np.ndarray,
+    *,
+    width_scale: float,
+) -> tuple[float, np.ndarray, np.ndarray]:
+    scale = float(width_scale)
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError("electrostatic Gaussian width scale must be finite and positive")
+    widths = np.asarray(
+        [
+            scale * float(covalent_radius(int(number)) or 0.75) / BOHR_TO_ANGSTROM
+            for number in atomic_numbers
+        ],
+        dtype=float,
+    )
+    natoms = len(atomic_numbers)
+    energy = 0.0
+    gradient = np.zeros(3 * natoms, dtype=float)
+    hessian = np.zeros((3 * natoms, 3 * natoms), dtype=float)
+    for i in range(natoms):
+        for j in range(i + 1, natoms):
+            product = float(charges[i]) * float(charges[j])
+            if abs(product) <= 1.0e-16:
+                continue
+            rvec = coordinates_bohr[i] - coordinates_bohr[j]
+            distance = _pair_distance(rvec, i, j)
+            radial = _gaussian_electrostatic_radial_derivative(
+                distance,
+                product,
+                widths[i],
+                widths[j],
+            )
+            energy += radial.energy
+            _accumulate_pair_derivatives(gradient, hessian, i, j, rvec, radial)
+    return energy, gradient, hessian
+
+
+def _gaussian_electrostatic_radial_derivative(
+    distance_bohr: float,
+    charge_product: float,
+    width_i_bohr: float,
+    width_j_bohr: float,
+) -> _RadialDerivative:
+    """Derivatives for Coulomb interaction between normalized Gaussian charges."""
+
+    r = float(distance_bohr)
+    factor = float(charge_product)
+    beta = 1.0 / math.sqrt(
+        2.0 * (float(width_i_bohr) ** 2 + float(width_j_bohr) ** 2)
+    )
+    argument = beta * r
+    gaussian = math.exp(-(argument**2))
+    error_function = math.erf(argument)
+    root_pi = math.sqrt(math.pi)
+    first = (
+        2.0 * beta * gaussian / (root_pi * r)
+        - error_function / r**2
+    )
+    second = (
+        -4.0 * beta**3 * gaussian / root_pi
+        - 4.0 * beta * gaussian / (root_pi * r**2)
+        + 2.0 * error_function / r**3
+    )
+    return _RadialDerivative(
+        factor * error_function / r,
+        factor * first,
+        factor * second,
+    )
 
 
 def _uff_radial_derivative(
@@ -463,6 +599,54 @@ def _exppe_radial_derivative(
         factor * energy,
         factor * first / r_min,
         factor * second / r_min**2,
+    )
+
+
+def _damped_exppe_radial_derivative(
+    distance_bohr: float,
+    r_min_bohr: float,
+    well_depth_hartree: float,
+    pair_scale: float,
+    *,
+    damping_scale: float,
+    damping_exponent: int,
+) -> _RadialDerivative:
+    """Apply a rational short-range switch to the complete Exp-PE term.
+
+    The radial non-bonded field is attenuated throughout both the covalent and
+    geminal-distance regions so that it supplies neither a hidden stretching
+    nor a hidden bending curvature. Those contributions belong to the local
+    topology-dependent corrections.
+    """
+
+    scale = float(damping_scale)
+    exponent = int(damping_exponent)
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError("vdW damping scale must be finite and positive")
+    if exponent < 4 or exponent % 2:
+        raise ValueError("vdW damping exponent must be an even integer of at least four")
+    base = _exppe_radial_derivative(
+        distance_bohr,
+        r_min_bohr,
+        well_depth_hartree,
+        pair_scale,
+    )
+    r = float(distance_bohr)
+    damping_radius = scale * float(r_min_bohr)
+    ratio = (damping_radius / r) ** exponent
+    damping = 1.0 / (1.0 + ratio)
+    first = exponent * damping * (1.0 - damping) / r
+    second = (
+        exponent
+        * damping
+        * (1.0 - damping)
+        / r**2
+        * (exponent * (1.0 - 2.0 * damping) - 1.0)
+    )
+    return _RadialDerivative(
+        damping * base.energy,
+        first * base.energy + damping * base.first,
+        second * base.energy + 2.0 * first * base.first + damping * base.second,
     )
 
 
@@ -533,21 +717,8 @@ def _zero_based_graph(natoms: int, bonds: tuple[tuple[int, int], ...]) -> dict[i
 
 
 def _topological_distances(graph: dict[int, set[int]], natoms: int) -> dict[tuple[int, int], int]:
-    distances: dict[tuple[int, int], int] = {}
-    for start in range(natoms):
-        seen = {start: 0}
-        queue: deque[int] = deque([start])
-        while queue:
-            current = queue.popleft()
-            for neighbor in graph.get(current, set()):
-                if neighbor in seen:
-                    continue
-                seen[neighbor] = seen[current] + 1
-                queue.append(neighbor)
-        for end, distance in seen.items():
-            if start < end:
-                distances[(start, end)] = distance
-    return distances
+    del natoms
+    return bounded_topological_distances(graph, maximum_distance=3)
 
 
 def _symmetrize(matrix: np.ndarray) -> np.ndarray:

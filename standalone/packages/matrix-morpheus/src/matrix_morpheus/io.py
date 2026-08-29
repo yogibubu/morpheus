@@ -56,13 +56,13 @@ REQUIRED_CSV_FIELDS = (
 def read_observations(path: Path) -> tuple[IsotopologueObservation, ...]:
     target = Path(path)
     suffix = target.suffix.lower()
-    from .msr_legacy import is_msr_legacy_file, read_msr_legacy_observations
+    from .msr_import import is_msr_file, read_msr_observations
     from .xyzin_observations import has_xyzin_isotopologues, read_xyzin_isotopologues
 
     if has_xyzin_isotopologues(target):
         return read_xyzin_isotopologues(target)
-    if is_msr_legacy_file(target):
-        return read_msr_legacy_observations(target)
+    if is_msr_file(target):
+        return read_msr_observations(target)
     if suffix == ".csv":
         return read_observations_csv(target)
     if suffix == ".json":

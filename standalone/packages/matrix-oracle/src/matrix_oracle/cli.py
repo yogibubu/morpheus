@@ -11,16 +11,7 @@ import platform
 import shutil
 import sys
 
-from .api import (
-    ORACLE_BATCH_SCHEMA,
-    SUPPORTED_INPUT_FORMATS,
-    OracleAnalysisRequest,
-    analyze_structure,
-    analyze_structures,
-    oracle_version,
-    write_oracle_analysis_reports,
-)
-from .config import load_oracle_config, write_oracle_config_template
+from ._version import __version__
 
 
 def build_parser(*, prog: str = "oracle") -> argparse.ArgumentParser:
@@ -28,7 +19,7 @@ def build_parser(*, prog: str = "oracle") -> argparse.ArgumentParser:
         prog=prog,
         description="ORACLE topology, symmetry and continuous molecular perception",
     )
-    parser.add_argument("--version", action="version", version=f"%(prog)s {oracle_version()}")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     analyze = sub.add_parser("analyze", help="Analyze a structure and write enriched xyzin")
@@ -63,6 +54,28 @@ def build_parser(*, prog: str = "oracle") -> argparse.ArgumentParser:
     analyze.add_argument("--symmetry-distance", type=float)
     analyze.add_argument("--symmetry-inertia", type=float)
     analyze.add_argument("--max-rotation-order", type=int)
+    analyze.add_argument(
+        "--cartesian-symmetrization",
+        choices=("inspect", "apply", "retain"),
+        default="inspect",
+    )
+    analyze.add_argument(
+        "--freeze-onic-contract",
+        action="store_true",
+        help=(
+            "Build and serialize the ORACLE-owned frozen ONIC primitive contract "
+            "for downstream SMITH chart realization"
+        ),
+    )
+    analyze.add_argument(
+        "--stationary-point",
+        choices=("minimum", "transition-state"),
+        default="minimum",
+        help=(
+            "Explicit scientific task. transition-state freezes the ORACLE "
+            "single-geometry reaction-kernel and chart prescription"
+        ),
+    )
     analyze.add_argument("--no-validate", action="store_true")
     analyze.add_argument("--json", action="store_true", help="Print the summary as JSON")
 
@@ -72,6 +85,11 @@ def build_parser(*, prog: str = "oracle") -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor", help="Check the standalone ORACLE installation")
     doctor.add_argument("--config", type=Path)
     doctor.add_argument("--json", action="store_true")
+
+    capabilities = sub.add_parser("capabilities", help="Report local and optional remote capabilities")
+    capabilities.add_argument("--remote-host")
+    capabilities.add_argument("--probe-remote", action="store_true")
+    capabilities.add_argument("--json", action="store_true")
 
     init_config = sub.add_parser("init-config", help="Write a portable configuration template")
     init_config.add_argument("output", type=Path)
@@ -89,6 +107,9 @@ def build_parser(*, prog: str = "oracle") -> argparse.ArgumentParser:
     report.add_argument("--json-output", type=Path)
     report.add_argument("--human-output", type=Path)
     report.add_argument("--json", action="store_true", dest="print_json")
+    migrate = sub.add_parser("migrate-report", help="Migrate a legacy JSON report")
+    migrate.add_argument("input", type=Path); migrate.add_argument("-o", "--output", type=Path, required=True)
+    migrate.add_argument("--backup", action="store_true")
 
     batch = sub.add_parser(
         "batch",
@@ -97,6 +118,10 @@ def build_parser(*, prog: str = "oracle") -> argparse.ArgumentParser:
     batch.add_argument("manifest", type=Path)
     batch.add_argument("--workers", type=int, default=0)
     batch.add_argument("--json", action="store_true", dest="print_json")
+    batch.add_argument("--resume", action="store_true")
+    batch.add_argument("--retries", type=int, default=0)
+    batch.add_argument("--errors-output", type=Path)
+    batch.add_argument("--checkpoint", type=Path)
 
     refine = sub.add_parser(
         "refine-l1",
@@ -112,143 +137,387 @@ def build_parser(*, prog: str = "oracle") -> argparse.ArgumentParser:
     refine.add_argument("--max-iterations", type=int, default=50)
     refine.add_argument("--json", action="store_true")
 
+    initial = sub.add_parser(
+        "prepare-initial",
+        help="Prepare the frozen LCB26/Cartesian-internal starting structure",
+    )
+    initial.add_argument("source", help="XYZ path or SMILES string")
+    initial.add_argument("-o", "--output", type=Path, required=True)
+    initial.add_argument("--lcb26-root", type=Path, required=True)
+    initial.add_argument("--declared-level", default="AUTO")
+    initial.add_argument("--source-kind", choices=("auto", "smiles", "xyz", "geometry", "enriched_xyz"), default="auto")
+    initial.add_argument("--max-iterations", type=int, default=30)
+    initial.add_argument("--closure-tolerance", type=float, default=1.0e-6)
+    initial.add_argument("--json", action="store_true")
+
+    refined = sub.add_parser(
+        "refine-structure",
+        help="Refine SMILES/XYZ with LCB26 and report fragments and rotational constants",
+    )
+    refined.add_argument("source", help="XYZ path or SMILES string")
+    refined.add_argument("-o", "--output", type=Path, required=True)
+    refined.add_argument("--lcb26-root", type=Path, required=True)
+    refined.add_argument("--declared-level", default="AUTO")
+    refined.add_argument("--source-kind", choices=("auto", "smiles", "xyz", "geometry", "enriched_xyz"), default="auto")
+    refined.add_argument("--fragment-limit", type=int, default=5)
+    refined.add_argument("--strict", action="store_true", help="Reject extrapolation without a local LCB26 donor")
+    refined.add_argument("--json", action="store_true")
+
     gui = sub.add_parser("gui", help="Launch the optional ORACLE GUI")
     gui.add_argument("xyzin", nargs="?", type=Path)
     return parser
 
 
+_SUCCESS_STATUSES = frozenset(
+    {"PASS", "WARN", "AWAITING_CARTESIAN_SYMMETRY_CONFIRMATION"}
+)
+
+
 def main(argv: list[str] | None = None, *, prog: str = "oracle") -> int:
     args = build_parser(prog=prog).parse_args(argv)
-    if args.command == "analyze":
-        result = analyze_structure(
-            args.source,
-            args.output,
-            source_kind=args.source_kind,
-            config=args.config,
-            symmetry_distance=args.symmetry_distance,
-            symmetry_inertia=args.symmetry_inertia,
-            max_rotation_order=args.max_rotation_order,
-            report=args.report,
-            human_report=args.human_report,
-            topology_snapshot=args.snapshot,
-            validate=not args.no_validate,
+    try:
+        handler = _COMMAND_HANDLERS[args.command]
+    except KeyError as exc:  # pragma: no cover - argparse enforces the choices.
+        raise AssertionError(f"unhandled ORACLE command: {args.command}") from exc
+    return handler(args)
+
+
+def _command_analyze(args: argparse.Namespace) -> int:
+    from .api import analyze_structure
+
+    result = analyze_structure(
+        args.source,
+        args.output,
+        source_kind=args.source_kind,
+        config=args.config,
+        symmetry_distance=args.symmetry_distance,
+        symmetry_inertia=args.symmetry_inertia,
+        max_rotation_order=args.max_rotation_order,
+        report=args.report,
+        human_report=args.human_report,
+        topology_snapshot=args.snapshot,
+        validate=not args.no_validate,
+        cartesian_symmetrization=args.cartesian_symmetrization,
+    )
+    if args.freeze_onic_contract and result.status in _SUCCESS_STATUSES:
+        from .sonic_contract_builder import write_oracle_sonic_contract_from_xyzin
+
+        write_oracle_sonic_contract_from_xyzin(result.output)
+    if args.stationary_point == "transition-state" and result.status in _SUCCESS_STATUSES:
+        from .transition_state_geometry import (
+            write_oracle_transition_state_geometry_contract_from_xyzin,
         )
-        if args.json:
-            print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
-        else:
-            print(f"output: {result.output}")
-            print(f"status: {result.status}")
-            print(f"atoms: {result.atom_count}")
-            print(f"point_group: {result.point_group}")
-            print(f"symmetry_operations: {result.symmetry_operation_count}")
-            print(f"bonds: {result.bond_count}")
-            print(f"rings: {result.ring_count}")
-            print(f"aromatic_atoms: {result.aromatic_atom_count}")
-            print(f"synthons: {result.synthon_count}")
-            print(f"primitives: {result.primitive_count}")
-            print(f"primitive_b_rank: {result.primitive_b_matrix_rank}")
-            print(f"primitive_b_sha256: {result.primitive_b_matrix_sha256}")
-            print(f"topology_sha256: {result.topology_sha256}")
-            if result.report is not None:
-                print(f"report: {result.report}")
-            if result.human_report is not None:
-                print(f"human_report: {result.human_report}")
-            if result.topology_snapshot is not None:
-                print(f"snapshot: {result.topology_snapshot}")
-        return 0 if result.status in {"PASS", "WARN"} else 2
-    if args.command == "formats":
-        records = [
-            {"kind": kind, "input": description, "availability": availability}
-            for kind, description, availability in SUPPORTED_INPUT_FORMATS
-        ]
-        if args.json:
-            print(json.dumps(records, indent=2))
-        else:
-            for record in records:
-                print(f"{record['kind']:14s} {record['input']:38s} {record['availability']}")
-        return 0
-    if args.command == "doctor":
-        return _doctor(args.config, as_json=args.json)
-    if args.command == "init-config":
-        path = write_oracle_config_template(args.output, overwrite=args.force)
+
+        write_oracle_transition_state_geometry_contract_from_xyzin(result.output)
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        _print_analysis_result(result)
+    return 0 if result.status in _SUCCESS_STATUSES else 2
+
+
+def _print_analysis_result(result: object) -> None:
+    fields = (
+        ("output", "output"),
+        ("status", "status"),
+        ("atoms", "atom_count"),
+        ("point_group", "point_group"),
+        ("symmetry_operations", "symmetry_operation_count"),
+        ("bonds", "bond_count"),
+        ("rings", "ring_count"),
+        ("aromatic_atoms", "aromatic_atom_count"),
+        ("synthons", "synthon_count"),
+        ("primitives", "primitive_count"),
+        ("primitive_b_rank", "primitive_b_matrix_rank"),
+        ("primitive_b_sha256", "primitive_b_matrix_sha256"),
+        ("topology_sha256", "topology_sha256"),
+    )
+    for label, attribute in fields:
+        print(f"{label}: {getattr(result, attribute)}")
+    for attribute in ("report", "human_report", "topology_snapshot"):
+        value = getattr(result, attribute)
+        if value is not None:
+            print(f"{attribute}: {value}")
+
+
+def _command_formats(args: argparse.Namespace) -> int:
+    from .api import SUPPORTED_INPUT_FORMATS
+
+    records = [
+        {"kind": kind, "input": description, "availability": availability}
+        for kind, description, availability in SUPPORTED_INPUT_FORMATS
+    ]
+    if args.json:
+        print(json.dumps(records, indent=2))
+    else:
+        for record in records:
+            print(
+                f"{record['kind']:14s} {record['input']:38s} "
+                f"{record['availability']}"
+            )
+    return 0
+
+
+def _command_doctor(args: argparse.Namespace) -> int:
+    return _doctor(args.config, as_json=args.json)
+
+
+def _command_capabilities(args: argparse.Namespace) -> int:
+    from .dependencies import dependency_status
+    from .remote import local_qm_capabilities, probe_remote_qm, remote_qm_manifest
+
+    payload = {
+        "schema": "matrix.oracle.capabilities.v1",
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "dependencies": dependency_status(),
+        "local_qm": local_qm_capabilities(),
+    }
+    if args.remote_host:
+        payload["remote_qm"] = (
+            probe_remote_qm(args.remote_host)
+            if args.probe_remote
+            else remote_qm_manifest(args.remote_host)
+        )
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def _command_init_config(args: argparse.Namespace) -> int:
+    from .config import write_oracle_config_template
+
+    path = write_oracle_config_template(args.output, overwrite=args.force)
+    print(path)
+    return 0
+
+
+def _command_examples(args: argparse.Namespace) -> int:
+    for path in _copy_examples(args.output, overwrite=args.force):
         print(path)
-        return 0
-    if args.command == "examples":
-        copied = _copy_examples(args.output, overwrite=args.force)
-        for path in copied:
-            print(path)
-        return 0
-    if args.command == "report":
-        human_output = args.human_output
-        if human_output is None and args.json_output is None:
-            human_output = args.xyzin.with_name(f"{args.xyzin.stem}.oracle.txt")
-        payload = write_oracle_analysis_reports(
-            args.xyzin,
-            json_output=args.json_output,
-            human_output=human_output,
+    return 0
+
+
+def _command_report(args: argparse.Namespace) -> int:
+    from .api import write_oracle_analysis_reports
+
+    human_output = args.human_output
+    if human_output is None and args.json_output is None:
+        human_output = args.xyzin.with_name(f"{args.xyzin.stem}.oracle.txt")
+    payload = write_oracle_analysis_reports(
+        args.xyzin,
+        json_output=args.json_output,
+        human_output=human_output,
+    )
+    if args.print_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        for output in (args.json_output, human_output):
+            if output is not None:
+                print(output)
+    return 0
+
+
+def _command_migrate_report(args: argparse.Namespace) -> int:
+    from .migrations import migrate_analysis_report
+
+    source_text = args.input.read_text(encoding="utf-8")
+    migrated = migrate_analysis_report(json.loads(source_text))
+    if args.backup:
+        args.input.with_suffix(args.input.suffix + ".bak").write_text(
+            source_text,
+            encoding="utf-8",
         )
-        if args.print_json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            if args.json_output is not None:
-                print(args.json_output)
-            if human_output is not None:
-                print(human_output)
-        return 0
-    if args.command == "batch":
-        requests = _batch_requests(args.manifest)
-        results = analyze_structures(requests, workers=args.workers)
-        payload = {
-            "schema": ORACLE_BATCH_SCHEMA,
-            "manifest": str(args.manifest.resolve()),
-            "requested_workers": args.workers,
-            "count": len(results),
-            "results": [result.to_dict() for result in results],
-        }
-        if args.print_json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            for result in results:
-                print(f"{result.status:5s} {result.output}")
-        return 0 if all(result.status in {"PASS", "WARN"} for result in results) else 2
-    if args.command == "refine-l1":
-        from .refinement import refine_l1_geometry
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(
+        json.dumps(migrated, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(args.output)
+    return 0
 
-        result = refine_l1_geometry(
-            args.source,
-            args.output,
-            include_core_valence=not args.no_core_valence,
-            include_conjugation=not args.no_conjugation,
-            include_hydrogen_bonds=not args.no_hydrogen_bonds,
-            cv_weight_threshold=args.cv_weight_threshold,
-            tolerance=args.tolerance,
-            max_iterations=args.max_iterations,
+
+def _command_batch(args: argparse.Namespace) -> int:
+    from .api import ORACLE_BATCH_SCHEMA, analyze_structures
+    from .batch import checkpoint_batch, pending_requests
+    from .validation import validate_xyzin_output
+
+    requests = _batch_requests(args.manifest)
+    if args.resume:
+        requests = pending_requests(requests)
+    results = analyze_structures(requests, workers=args.workers)
+    for _ in range(max(0, args.retries)):
+        failed = tuple(
+            request
+            for request, result in zip(requests, results, strict=True)
+            if result.status not in {"PASS", "WARN"}
         )
-        payload = {
-            "source": str(result.source),
-            "output": str(result.output),
-            "input_level": "L1",
-            "output_level": "PL1",
-            "target_count": result.target_count,
-            "iterations": result.back_transformation.iterations,
-            "maximum_residual": result.back_transformation.maximum_residual,
-            "status": result.analysis.status,
+        if not failed:
+            break
+        retried = analyze_structures(failed, workers=args.workers)
+        result_by_output = {str(result.output): result for result in results}
+        result_by_output.update({str(result.output): result for result in retried})
+        results = tuple(
+            result_by_output[str(request.output.resolve())] for request in requests
+        )
+    payload = {
+        "schema": ORACLE_BATCH_SCHEMA,
+        "manifest": str(args.manifest.resolve()),
+        "requested_workers": args.workers,
+        "count": len(results),
+        "results": [
+            {
+                **result.to_dict(),
+                "output_validation": validate_xyzin_output(result.output),
+            }
+            for result in results
+        ],
+    }
+    if args.print_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        for result in results:
+            print(f"{result.status:5s} {result.output}")
+    if args.errors_output is not None:
+        failed_payload = {
+            "schema": "matrix.oracle.batch_errors.v1",
+            "errors": [
+                result.to_dict()
+                for result in results
+                if result.status not in {"PASS", "WARN"}
+            ],
         }
-        if args.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            for key, value in payload.items():
-                print(f"{key}: {value}")
-        return 0
-    if args.command == "gui":
-        from .gui import run as gui_run
+        args.errors_output.write_text(
+            json.dumps(failed_payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.checkpoint is not None:
+        checkpoint_batch(
+            [
+                str(result.output)
+                for result in results
+                if result.status in {"PASS", "WARN"}
+            ],
+            args.checkpoint,
+        )
+    return 0 if all(result.status in {"PASS", "WARN"} for result in results) else 2
 
-        gui_args = [str(args.xyzin)] if args.xyzin is not None else []
-        return gui_run(gui_args)
-    raise AssertionError(f"unhandled ORACLE command: {args.command}")
+
+def _command_refine_l1(args: argparse.Namespace) -> int:
+    from .refinement import refine_l1_geometry
+
+    result = refine_l1_geometry(
+        args.source,
+        args.output,
+        include_core_valence=not args.no_core_valence,
+        include_conjugation=not args.no_conjugation,
+        include_hydrogen_bonds=not args.no_hydrogen_bonds,
+        cv_weight_threshold=args.cv_weight_threshold,
+        tolerance=args.tolerance,
+        max_iterations=args.max_iterations,
+    )
+    payload = {
+        "source": str(result.source),
+        "output": str(result.output),
+        "input_level": "L1",
+        "output_level": "PL1",
+        "target_count": result.target_count,
+        "iterations": result.back_transformation.iterations,
+        "maximum_residual": result.back_transformation.maximum_residual,
+        "rotational_constants_MHz": dict(
+            zip(
+                ("A_e", "B_e", "C_e"),
+                result.rotational_constants_mhz,
+                strict=True,
+            )
+        ),
+        "principal_moments_amu_angstrom2": list(
+            result.principal_moments_amu_angstrom2
+        ),
+        "status": result.analysis.status,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        for key, value in payload.items():
+            print(f"{key}: {value}")
+    return 0
 
 
-def _batch_requests(path: Path) -> tuple[OracleAnalysisRequest, ...]:
+def _command_prepare_initial(args: argparse.Namespace) -> int:
+    from .initial_structure import prepare_initial_structure
+
+    result = prepare_initial_structure(
+        args.source,
+        args.output,
+        lcb26_root=args.lcb26_root,
+        declared_level=args.declared_level,
+        source_kind=args.source_kind,
+        max_iterations=args.max_iterations,
+        closure_tolerance=args.closure_tolerance,
+    )
+    print(
+        json.dumps(result.to_dict(), indent=2, sort_keys=True)
+        if args.json
+        else result.output_xyz
+    )
+    return 0 if result.closure_converged else 2
+
+
+def _command_refine_structure(args: argparse.Namespace) -> int:
+    from .refine_structure import refine_structure
+
+    result = refine_structure(
+        args.source,
+        args.output,
+        lcb26_root=args.lcb26_root,
+        declared_level=args.declared_level,
+        source_kind=args.source_kind,
+        fragment_limit=args.fragment_limit,
+        strict=args.strict,
+    )
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        print(f"output: {result.output_xyz}")
+        print(f"report: {result.report}")
+        print(
+            "rotational_constants_MHz: "
+            + ", ".join(f"{value:.6f}" for value in result.rotational_constants_MHz)
+        )
+        print(
+            "fragments: "
+            + ", ".join(str(item.get("identifier")) for item in result.fragments)
+        )
+    return 0
+
+
+def _command_gui(args: argparse.Namespace) -> int:
+    from .gui import run as gui_run
+
+    gui_args = [str(args.xyzin)] if args.xyzin is not None else []
+    return gui_run(gui_args)
+
+
+_COMMAND_HANDLERS = {
+    "analyze": _command_analyze,
+    "formats": _command_formats,
+    "doctor": _command_doctor,
+    "capabilities": _command_capabilities,
+    "init-config": _command_init_config,
+    "examples": _command_examples,
+    "report": _command_report,
+    "migrate-report": _command_migrate_report,
+    "batch": _command_batch,
+    "refine-l1": _command_refine_l1,
+    "prepare-initial": _command_prepare_initial,
+    "refine-structure": _command_refine_structure,
+    "gui": _command_gui,
+}
+
+
+def _batch_requests(path: Path):
+    from .api import ORACLE_BATCH_SCHEMA, OracleAnalysisRequest
+
     manifest = Path(path).expanduser().resolve()
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     if payload.get("schema") != ORACLE_BATCH_SCHEMA:
@@ -288,10 +557,18 @@ def matrix_main(argv: list[str] | None = None) -> int:
 
 
 def _doctor(config_path: Path | None, *, as_json: bool) -> int:
+    from .api import oracle_version
+    from .config import load_oracle_config
+
     config = load_oracle_config(config_path)
-    required_modules = ("numpy", "matrix_core", "matrix_chem", "matrix_oracle")
+    required_modules = (
+        "numpy",
+        "matrix_core",
+        "matrix_chem",
+        "matrix_switch",
+        "matrix_oracle",
+    )
     optional_modules = (
-        "rdkit",
         "matrix_link",
         "matrix_gaussian",
         "matrix_molpro",

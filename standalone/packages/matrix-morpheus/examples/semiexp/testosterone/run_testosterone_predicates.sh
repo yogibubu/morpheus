@@ -6,7 +6,7 @@ OUT='working/semiexp/testosterone_predicates'
 BASIS="$OUT/basis"
 XY_SIGMA="${MATRIX_TESTOSTERONE_XY_PREDICATE_SIGMA:-0.005}"
 
-python -m matrix semiexp \
+matrix semiexp \
   --xyz "$BASE/testosterone_DPCS3.xyz" \
   --observations "$BASE/isotopologues.toml" \
   --xyzin "$BASIS/xyzin" \
@@ -80,7 +80,7 @@ print(";".join(fixed))
 PY
 )
 
-set -- python -m matrix semiexp \
+set -- matrix semiexp \
   --xyz "$BASE/testosterone_DPCS3.xyz" \
   --observations "$BASE/isotopologues.toml" \
   --xyzin "$OUT/xyzin" \

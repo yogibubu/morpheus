@@ -7,6 +7,8 @@ from pathlib import Path
 from matrix_core import read_sectioned_lines, replace_section, section_content
 
 from .geometry_io import GeometryParseError, read_enriched_xyz
+from .topology.elements import atomic_number
+from .topology.periodic_properties import periodic_atomic_properties
 from .topology.contracts import (
     MATRIX_XYZ_FRAGMENTS_SCHEMA,
     MATRIX_XYZ_SYNTHONS_SCHEMA,
@@ -46,7 +48,8 @@ def validate_enriched_molecule(path: Path, *, require_fragments: bool = False) -
     lines = read_sectioned_lines(target)
     messages: list[ValidationMessage] = []
 
-    atom_count = _validate_geometry(target, messages)
+    atom_symbols = _validate_geometry(target, messages)
+    atom_count = len(atom_symbols)
     _require_schema(lines, "SYMMETRY", (REQUIRED_SYMMETRY_SCHEMA,), messages)
     _require_schema(lines, "TOPOLOGY", SUPPORTED_TOPOLOGY_SCHEMAS, messages)
     _require_schema(lines, "SYNTHONS", SUPPORTED_SYNTHONS_SCHEMAS, messages)
@@ -55,13 +58,13 @@ def validate_enriched_molecule(path: Path, *, require_fragments: bool = False) -
     elif section_content(lines, "FRAGMENTS"):
         _require_schema(lines, "FRAGMENTS", SUPPORTED_FRAGMENTS_SCHEMAS, messages)
     if atom_count > 0:
-        _validate_topology_contract(lines, atom_count, messages)
+        _validate_topology_contract(lines, atom_symbols, messages)
         _validate_fragments_contract(lines, atom_count, messages)
 
     status = _status_from_messages(messages)
     if not messages:
         messages.append(
-            ValidationMessage("INFO", "VALIDATION_PASS", "Molecule is ready for GICForge")
+            ValidationMessage("INFO", "VALIDATION_PASS", "Molecule is ready for SMITH coordinate construction")
         )
     return ValidationResult(status=status, messages=tuple(messages))
 
@@ -85,15 +88,15 @@ def write_validation_section(path: Path, *, require_fragments: bool = False) -> 
     return result
 
 
-def _validate_geometry(path: Path, messages: list[ValidationMessage]) -> int:
+def _validate_geometry(path: Path, messages: list[ValidationMessage]) -> tuple[str, ...]:
     try:
         geometry = read_enriched_xyz(path)
     except GeometryParseError as exc:
         messages.append(ValidationMessage("ERROR", "INVALID_XYZ", str(exc)))
-        return 0
+        return ()
     if geometry.natoms <= 0:
         messages.append(ValidationMessage("ERROR", "NO_ATOMS", "XYZ block contains no atoms"))
-        return 0
+        return ()
     for idx, row in enumerate(geometry.coordinates_angstrom, start=1):
         if not all(math.isfinite(float(value)) for value in row):
             messages.append(
@@ -103,8 +106,8 @@ def _validate_geometry(path: Path, messages: list[ValidationMessage]) -> int:
                     f"Atom {idx} has invalid coordinates",
                 )
             )
-            return 0
-    return int(geometry.natoms)
+            return ()
+    return tuple(str(atom) for atom in geometry.atoms)
 
 
 def _require_schema(
@@ -141,9 +144,10 @@ def _status_from_messages(messages: list[ValidationMessage]) -> str:
 
 def _validate_topology_contract(
     lines: list[str],
-    atom_count: int,
+    atom_symbols: tuple[str, ...],
     messages: list[ValidationMessage],
 ) -> None:
+    atom_count = len(atom_symbols)
     topology = section_content(lines, "TOPOLOGY")
     if not topology or not schema_line_supported(topology[0], SUPPORTED_TOPOLOGY_SCHEMAS):
         return
@@ -197,12 +201,29 @@ def _validate_topology_contract(
                 )
     bonded_atoms = {atom for bond in bonds for atom in bond}
     isolated = [atom for atom in range(1, atom_count + 1) if atom not in bonded_atoms]
-    if isolated and atom_count > 1:
+    fragment_memberships = _fragment_memberships(lines)
+    complete_fragments = (
+        _section_value(section_content(lines, "FRAGMENTS"), "STATUS") == "BUILT"
+        and sorted(atom for fragment in fragment_memberships for atom in fragment)
+        == list(range(1, atom_count + 1))
+    )
+    singleton_atoms = {
+        fragment[0] for fragment in fragment_memberships if len(fragment) == 1
+    }
+    invalid_isolated = [
+        atom
+        for atom in isolated
+        if not _singleton_element_is_supported(atom_symbols[atom - 1])
+        or not complete_fragments
+        or atom not in singleton_atoms
+    ]
+    if invalid_isolated:
         messages.append(
             ValidationMessage(
                 "ERROR",
                 "ISOLATED_TOPOLOGY_ATOMS",
-                "Atoms without topology bonds: " + ",".join(str(atom) for atom in isolated),
+                "Unsupported isolated atoms or atoms without a complete singleton fragment: "
+                + ",".join(str(atom) for atom in invalid_isolated),
             )
         )
     bond_set = set(bonds)
@@ -221,6 +242,15 @@ def _validate_topology_contract(
                     + ",".join(f"{left}-{right}" for left, right in missing),
                 )
             )
+
+
+def _singleton_element_is_supported(symbol: str) -> bool:
+    """Restrict isolated atomic fragments to the current explicit policy."""
+
+    number = atomic_number(symbol)
+    if number is None or not 1 <= int(number) <= 118:
+        return False
+    return periodic_atomic_properties(int(number)).group in {1, 2, 17, 18}
 
 
 def _validate_fragments_contract(
@@ -268,15 +298,45 @@ def _validate_fragments_contract(
                 "Fragment atom indexes out of range: " + ",".join(str(atom) for atom in invalid),
             )
         )
-    missing = sorted(set(range(1, atom_count + 1)) - set(fragment_atoms))
-    if missing:
+    expected = list(range(1, atom_count + 1))
+    if sorted(fragment_atoms) != expected:
         messages.append(
             ValidationMessage(
                 "ERROR",
                 "INCOMPLETE_FRAGMENT_COVERAGE",
-                "Fragments do not cover atoms: " + ",".join(str(atom) for atom in missing),
+                "Built fragments must contain every atom exactly once",
             )
         )
+
+
+def _fragment_memberships(lines: list[str]) -> tuple[tuple[int, ...], ...]:
+    fragments = section_content(lines, "FRAGMENTS")
+    memberships: list[tuple[int, ...]] = []
+    in_records = False
+    for line in fragments:
+        text = line.strip()
+        if text.startswith("[") and text.endswith("]"):
+            in_records = text.upper() == "[FRAGMENTS]"
+            continue
+        if not in_records or "ATOMS=" not in text.upper():
+            continue
+        atoms_text = text.upper().split("ATOMS=", 1)[1].split(None, 1)[0]
+        try:
+            memberships.append(
+                tuple(int(atom) for atom in atoms_text.replace(";", ",").split(",") if atom)
+            )
+        except ValueError:
+            continue
+    return tuple(memberships)
+
+
+def _section_value(lines: list[str], key: str) -> str | None:
+    prefix = key.upper() + " "
+    for line in lines:
+        text = line.strip()
+        if text.upper().startswith(prefix):
+            return text[len(prefix) :].strip().upper()
+    return None
 
 
 def _parse_bonds(

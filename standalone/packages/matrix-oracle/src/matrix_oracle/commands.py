@@ -7,6 +7,8 @@ import subprocess
 import sys
 from collections.abc import Sequence
 
+from matrix_core.entrypoints import matrix_command
+
 
 MORBVIS_URL = "https://yasuaki-ito.github.io/morbvis/"
 WMSROT_URL = "https://www.skies-village.it/webtools/wmsrot/"
@@ -277,8 +279,8 @@ def qm_remote_submit_command(
     input_path: Path | str,
     *,
     engine: str,
-    host: str = "oracle",
-    remote_root: str = "~/matrix",
+    host: str = "",
+    remote_root: str = "",
     extra_args: Sequence[str] = (),
 ) -> OracleGuiCommand:
     argv = [
@@ -288,11 +290,11 @@ def qm_remote_submit_command(
         str(Path(input_path)),
         "--engine",
         engine,
-        "--host",
-        host,
-        "--remote-root",
-        remote_root,
     ]
+    if str(host).strip():
+        argv.extend(("--machine", str(host).strip()))
+    if str(remote_root).strip():
+        argv.extend(("--remote-root", str(remote_root).strip()))
     for arg in extra_args:
         argv.extend(["--extra-arg", str(arg)])
     return OracleGuiCommand("Submit remote QM job", tuple(argv))
@@ -300,28 +302,22 @@ def qm_remote_submit_command(
 
 def qm_remote_status_command(
     *,
-    host: str = "oracle",
-    remote_root: str = "~/matrix",
+    host: str = "",
+    remote_root: str = "",
 ) -> OracleGuiCommand:
-    return OracleGuiCommand(
-        "Inspect remote QM jobs",
-        (
-            *_matrix_cli(),
-            "qm",
-            "remote-status",
-            "--host",
-            host,
-            "--remote-root",
-            remote_root,
-        ),
-    )
+    argv = [*_matrix_cli(), "qm", "remote-status"]
+    if str(host).strip():
+        argv.extend(("--machine", str(host).strip()))
+    if str(remote_root).strip():
+        argv.extend(("--remote-root", str(remote_root).strip()))
+    return OracleGuiCommand("Inspect remote QM jobs", tuple(argv))
 
 
 def qm_remote_fetch_command(
     job: str,
     *,
-    host: str = "oracle",
-    remote_root: str = "~/matrix",
+    host: str = "",
+    remote_root: str = "",
     destination: Path | str = "remote_qm_runs",
     promote: str = "none",
     xyzin: Path | str | None = None,
@@ -331,20 +327,20 @@ def qm_remote_fetch_command(
         "qm",
         "remote-fetch",
         job,
-        "--host",
-        host,
-        "--remote-root",
-        remote_root,
         "--dest",
         str(Path(destination)),
         "--promote",
         promote,
     ]
+    if str(host).strip():
+        argv.extend(("--machine", str(host).strip()))
+    if str(remote_root).strip():
+        argv.extend(("--remote-root", str(remote_root).strip()))
     if xyzin is not None:
         argv.extend(["--xyzin", str(Path(xyzin))])
     produced: list[str] = []
     if promote == "molpro":
-        produced.extend(["SOURCE", "BASIC", "SYMMETRY", "TOPOLOGY", "SYNTHONS"])
+        produced.extend(["SOURCE", "BASIC", "SYMMETRY", "TOPOLOGY", "AROMATICITY", "SYNTHONS"])
     elif promote == "gaussian-log-hessian":
         produced.extend(["CARTESIAN_HESSIAN", "NORMAL_MODES"])
     elif promote == "gaussian-rovib":
@@ -354,7 +350,7 @@ def qm_remote_fetch_command(
     elif promote == "gaussian-fchk":
         produced.extend(["CARTESIAN_HESSIAN", "NORMAL_MODES", "QFF", "ELECTRONIC", "ORBITALS"])
     elif promote == "orca":
-        produced.extend(["SOURCE", "BASIC", "SYMMETRY", "TOPOLOGY", "SYNTHONS", "CARTESIAN_HESSIAN"])
+        produced.extend(["SOURCE", "BASIC", "SYMMETRY", "TOPOLOGY", "AROMATICITY", "SYNTHONS", "CARTESIAN_HESSIAN"])
     return OracleGuiCommand(
         "Fetch remote QM output",
         tuple(argv),
@@ -1362,8 +1358,8 @@ def gicforge_fortran_audit_command(
     return OracleGuiCommand("Run GICForge Python/Fortran audit", tuple(argv))
 
 
-def _matrix_cli() -> tuple[str, str, str]:
-    return (sys.executable, "-m", "matrix")
+def _matrix_cli() -> tuple[str, ...]:
+    return matrix_command()
 
 
 def _append_flag(argv: list[str], flag: str, enabled: bool) -> None:

@@ -8,8 +8,9 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
-import os
 from pathlib import Path
+
+from matrix_core import atomic_json_write
 
 from .sentinel_protocol import validate_request, validate_response
 
@@ -139,13 +140,7 @@ def _envelope(request: dict, status: str) -> dict:
 
 
 def _write_atomic(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(payload, allow_nan=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(temporary, path)
+    atomic_json_write(path, payload, allow_nan=False)
 
 
 if __name__ == "__main__":

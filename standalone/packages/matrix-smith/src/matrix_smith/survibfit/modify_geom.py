@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from matrix_core.parameters.bdpcs3 import load_bdpcs3_parameters
+from matrix_smith.parameters.bdpcs3 import load_bdpcs3_parameters
 
-from .pipeline import primitives_from_topology, build_topology, b_matrix
+from .pipeline import primitives_from_topology, b_matrix
 from .primitives import Primitive, eval_primitives
-from .transforms import internal_to_cart_coords, compute_fortran_update_matrix
+from .transforms import compute_fortran_update_matrix
 
 BOHR_TO_ANG = 0.52917721092
 ANG_TO_BOHR = 1.0 / BOHR_TO_ANG
@@ -99,12 +98,8 @@ def _is_carbon(z: int) -> bool:
     return int(z) == 6
 
 
-def _is_nitrogen(z: int) -> bool:
-    return int(z) == 7
 
 
-def _is_oxygen(z: int) -> bool:
-    return int(z) == 8
 
 
 def _is_sulfur(z: int) -> bool:
@@ -176,8 +171,6 @@ def _bdpcs3_pyykko_single_double_triple(z: int):
     )
 
 
-def _is_ch_pair(z1: int, z2: int) -> bool:
-    return (_is_carbon(z1) and _is_hydrogen(z2)) or (_is_carbon(z2) and _is_hydrogen(z1))
 
 
 def _bdpcs3_electronegativity_scale(z1: int, z2: int) -> float:
@@ -404,21 +397,6 @@ def bdpcs3_function(version: str):
     raise ValueError(f"Unknown BDPCS3 version: {version}")
 
 
-def _load_bdpcs3_pair_scales():
-    global _BDPCS3_SCALES
-    if _BDPCS3_SCALES is not None:
-        return _BDPCS3_SCALES
-    path = Path(__file__).with_name("bdpcs3_pair_scales.json")
-    if not path.exists():
-        _BDPCS3_SCALES = {}
-        return _BDPCS3_SCALES
-    data = json.loads(path.read_text())
-    scales = {}
-    for key, val in data.items():
-        a_str, b_str = key.split("-")
-        scales[(int(a_str), int(b_str))] = float(val)
-    _BDPCS3_SCALES = scales
-    return _BDPCS3_SCALES
 
 
 def _disable_bdpcs3_fit():
@@ -520,26 +498,6 @@ def isotopic_masses_au(Z, isotopes=None, use_average=False):
     return np.array(masses, dtype=float), used
 
 
-def _align_to_principal_axes(coords, masses):
-    nat = coords.shape[0]
-    com = np.sum(coords * masses[:, None], axis=0) / np.sum(masses)
-    coords_centered = coords - com
-    I = np.zeros((3, 3))
-    for i in range(nat):
-        xi, yi, zi = coords_centered[i]
-        mi = masses[i]
-        I += mi * np.array(
-            [
-                [yi**2 + zi**2, -xi * yi, -xi * zi],
-                [-xi * yi, xi**2 + zi**2, -yi * zi],
-                [-xi * zi, -yi * zi, xi**2 + yi**2],
-            ]
-        )
-    eigvals, eigvecs = np.linalg.eigh(I)
-    if np.linalg.det(eigvecs) < 0:
-        eigvecs[:, -1] *= -1
-    rotated = coords_centered @ eigvecs
-    return rotated + com
 
 
 def rotational_constants(coords_au, masses_au):
@@ -607,84 +565,8 @@ def _connected_components(adjacency, nat):
     return comps
 
 
-def _fragment_constraints(coords0, masses, comps, ref_idx):
-    # Build constraint rows to keep non-reference fragments fixed (COM + rotation)
-    nat = coords0.shape[0]
-    rows = []
-    for frag_idx, comp in enumerate(comps):
-        if frag_idx == ref_idx:
-            continue
-        if len(comp) < 2:
-            continue
-        idx = np.array(comp, dtype=int)
-        m = masses[idx]
-        com = np.sum(coords0[idx] * m[:, None], axis=0) / np.sum(m)
-        r = coords0[idx] - com
-
-        # COM constraints: sum m_i dx_i = 0
-        for axis in range(3):
-            row = np.zeros(3 * nat)
-            for ii, atom in enumerate(idx):
-                row[3 * atom + axis] = m[ii]
-            rows.append(row)
-
-        # Rotation constraints: sum m_i (r_i x dx_i) = 0
-        for axis in range(3):
-            row = np.zeros(3 * nat)
-            for ii, atom in enumerate(idx):
-                rx, ry, rz = r[ii]
-                if axis == 0:
-                    # x component: ry*dz - rz*dy
-                    row[3 * atom + 1] += -m[ii] * rz
-                    row[3 * atom + 2] += m[ii] * ry
-                elif axis == 1:
-                    # y component: rz*dx - rx*dz
-                    row[3 * atom + 0] += m[ii] * rz
-                    row[3 * atom + 2] += -m[ii] * rx
-                else:
-                    # z component: rx*dy - ry*dx
-                    row[3 * atom + 0] += -m[ii] * ry
-                    row[3 * atom + 1] += m[ii] * rx
-            rows.append(row)
-
-    if not rows:
-        return np.zeros((0, coords0.size), dtype=float)
-    rows = np.array(rows, dtype=float)
-    # Normalize rows to avoid scale imbalance with B
-    norms = np.linalg.norm(rows, axis=1)
-    norms[norms < 1e-20] = 1.0
-    rows = rows / norms[:, None]
-    return rows
 
 
-def _backtransform_with_constraints(
-    s_target,
-    coords0,
-    prims,
-    masses,
-    comps,
-    ref_idx,
-    max_iter=50,
-    tol=1e-8,
-    apply_constraints=True,
-    mass_weighted=False,
-):
-    coords = coords0.copy()
-    for _ in range(max_iter):
-        s = eval_primitives(prims, coords)
-        ds = s_target - s
-        if np.linalg.norm(ds) < tol:
-            break
-        B = b_matrix(prims, coords, fd_step=1e-4)
-        if apply_constraints:
-            crows = _fragment_constraints(coords0, masses, comps, ref_idx)
-            if crows.size:
-                B = np.vstack([B, crows])
-                ds = np.concatenate([ds, np.zeros(crows.shape[0])])
-        G1B = compute_fortran_update_matrix(B, masses if mass_weighted else None, tol=1e-5)
-        dx = G1B @ ds
-        coords = coords + dx.reshape(coords.shape)
-    return coords
 
 
 def _backtransform_iterative(

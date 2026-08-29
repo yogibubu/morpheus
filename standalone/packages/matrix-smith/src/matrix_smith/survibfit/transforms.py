@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import math
 import os
 import numpy as np
+
+from matrix_numerics import numerical_matrix_rank
 
 from .pipeline import b_matrix, eval_primitives, zeff_from_topology
 from .symmetry_local import (
@@ -1003,14 +1004,14 @@ def oop_u(prims, coords, tol=1e-8, fd_step=1e-4, linear_threshold=np.deg2rad(170
 
     by_center = {}
     for i in indices:
-        a, j, b, c = prims[i].atoms
+        center, a, b, c = prims[i].atoms
         # Skip oop if any valence angle at center is near-linear
-        ang_ab = geom_angle(a, j, b, coords)
-        ang_ac = geom_angle(a, j, c, coords)
-        ang_bc = geom_angle(b, j, c, coords)
+        ang_ab = geom_angle(a, center, b, coords)
+        ang_ac = geom_angle(a, center, c, coords)
+        ang_bc = geom_angle(b, center, c, coords)
         if ang_ab >= linear_threshold or ang_ac >= linear_threshold or ang_bc >= linear_threshold:
             continue
-        by_center.setdefault(j, []).append(i)
+        by_center.setdefault(center, []).append(i)
 
     kept = []
     for idxs in by_center.values():
@@ -1517,7 +1518,7 @@ def _rank_pruned_column_indices(prims, coords, U, column_labels, fd_step=1e-4, t
     B = b_matrix(prims, coords, fd_step)
     projector = _vibrational_projector_local(coords)
     rows = U.T @ B @ projector
-    max_rank = int(np.linalg.matrix_rank(rows, tol=tol))
+    max_rank = numerical_matrix_rank(rows, absolute_tolerance=tol)
     if max_rank < target:
         import warnings
 
@@ -1574,7 +1575,10 @@ def _vibrational_rank(coords) -> int:
             [component for coord in coords for component in np.cross(axis, coord)], dtype=float
         )
         external.append(vec)
-    rank = int(np.linalg.matrix_rank(np.vstack(external), tol=1.0e-10))
+    rank = numerical_matrix_rank(
+        np.vstack(external),
+        absolute_tolerance=1.0e-10,
+    )
     return max(0, 3 * natoms - rank)
 
 

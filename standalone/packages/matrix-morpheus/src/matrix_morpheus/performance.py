@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from .contracts import IsotopologueObservation
-from .fit import _mass_vector_for_observation, _mass_vector_for_isotopes
+from .measurement_model import _mass_vector_for_observation, _mass_vector_for_isotopes
 
 
 def mass_vector_for_observation(

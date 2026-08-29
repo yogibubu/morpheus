@@ -44,17 +44,17 @@ def primitive_signature(p, atom_class, Z, ringset=None, angle_bin_val=None):
         )
         return (kind, atom_class[j], atom_class[k], atom_class[i], atom_class[l], htag, ring_tag)
     if kind == "out_of_plane":
-        i, j, k, l = atoms
+        center, plane1, plane2, out = atoms
         htag = (
-            1 if Z[i] == 1 else 0,
-            1 if Z[j] == 1 else 0,
-            1 if Z[k] == 1 else 0,
-            1 if Z[l] == 1 else 0,
+            1 if Z[center] == 1 else 0,
+            1 if Z[plane1] == 1 else 0,
+            1 if Z[plane2] == 1 else 0,
+            1 if Z[out] == 1 else 0,
         )
         return (
             kind,
-            atom_class[j],
-            tuple(sorted((atom_class[i], atom_class[k], atom_class[l]))),
+            atom_class[center],
+            tuple(sorted((atom_class[plane1], atom_class[plane2], atom_class[out]))),
             htag,
             ring_tag,
         )

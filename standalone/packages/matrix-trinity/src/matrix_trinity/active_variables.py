@@ -126,6 +126,7 @@ def active_variable_contract_from_file(
             reference = float(item.get("reference_value", sonic_reference[sonic_index]))
             item["coordinate"] = identifiers[sonic_index]
             item.setdefault("units", "SONIC-unit")
+            item.update(gic_metadata_for_contract(definition, identifiers[sonic_index]))
         elif kind in {"sonic_linear_combination", "linear_sonic"}:
             terms = item.get("terms")
             if not isinstance(terms, list) or not terms:
@@ -141,7 +142,11 @@ def active_variable_contract_from_file(
                 coefficient = float(term.get("coefficient", 1.0))
                 column[sonic_index] += coefficient
                 normalized_terms.append(
-                    {"coordinate": identifiers[sonic_index], "coefficient": coefficient}
+                    {
+                        "coordinate": identifiers[sonic_index],
+                        "coefficient": coefficient,
+                        **gic_metadata_for_contract(definition, identifiers[sonic_index]),
+                    }
                 )
             reference = float(item.get("reference_value", column @ sonic_reference))
             item["terms"] = normalized_terms
@@ -234,3 +239,50 @@ def _coordinate_index(
     if index < 0 or index >= len(identifiers):
         raise ValueError(f"SONIC coordinate index outside 1..{len(identifiers)}: {coordinate!r}")
     return index
+
+
+def gic_metadata_for_contract(
+    definition: Any, identifier: str
+) -> dict[str, object]:
+    """Expose stable SMITH semantics to downstream samplers."""
+
+    gic = next(
+        (
+            item
+            for item in definition.gics
+            if identifier in {item.identifier, item.name}
+        ),
+        None,
+    )
+    if gic is None:
+        return {}
+    primitive = next(
+        (
+            item
+            for item in definition.primitives
+            if item.identifier == gic.primitive_id
+        ),
+        None,
+    )
+    payload: dict[str, object] = {
+        "family": str(gic.family),
+        "irrep": str(gic.irrep),
+    }
+    if primitive is not None:
+        payload.update(
+            {
+                "function": str(primitive.function),
+                "semantic_type": str(primitive.semantic_type),
+                "atoms": list(primitive.atoms),
+                "mode": int(primitive.mode),
+                "block": (
+                    f"{primitive.function}:"
+                    f"{','.join(str(value) for value in primitive.atoms)}:"
+                    f"{','.join(str(value) for value in primitive.ref_atoms)}"
+                ),
+            }
+        )
+        if primitive.function in {"D", "IMPD", "RPCK"}:
+            payload["periodic"] = True
+            payload["period"] = float(2.0 * np.pi)
+    return payload

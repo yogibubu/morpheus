@@ -18,7 +18,7 @@ from matrix_smith.survibfit.primitives import (
 )
 from matrix_smith.survibfit.synthon_similarity import compare_against_library
 
-from .fit import _atomic_number
+from .coordinate_model import _atomic_number
 
 
 DEFAULT_SE_GEOMETRY_LIBRARY = Path(__file__).resolve().parent / "data" / "se_geometries"

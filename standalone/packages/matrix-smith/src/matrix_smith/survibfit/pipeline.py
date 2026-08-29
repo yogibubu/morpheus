@@ -9,7 +9,6 @@ from matrix_chem.topology.elements import atomic_number
 from matrix_chem.topology.pipeline import build_topology_objects
 
 from .primitives import Primitive, build_primitives, eval_primitive, grad_primitive
-from .geometry import norm
 
 BOHR_TO_ANG = 0.52917721092
 _TOPO_CACHE = []
@@ -286,13 +285,10 @@ def g_matrix_derivs(u, prims, coords, masses, fd_step, dq=1e-3):
     Returns:
         G0, dG (nvib,nvib,nvib), d2G (nvib,nvib,nvib,nvib)
     """
-    s0 = eval_primitives(prims, coords)
     b0 = b_matrix(prims, coords, fd_step)
     u = np.array(u)
-    q0 = q_from_s(u, s0)
     g0 = g_matrix(u, b0, masses)
 
-    nprim = b0.shape[0]
     nat = coords.shape[0]
     nvib = u.shape[1]
 

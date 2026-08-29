@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://matrix.local/schemas/provenance-event-v1.schema.json",
-  "title": "The ONE provenance event v1",
+  "title": "Keymaker provenance event v1",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -9,7 +9,7 @@
     "project_id", "actor", "subject_id", "payload", "previous_hash", "event_hash"
   ],
   "properties": {
-    "schema": {"const": "matrix.the_one.provenance.event.v1"},
+    "schema": {"const": "matrix.keymaker.provenance.event.v1"},
     "sequence": {"type": "integer", "minimum": 1},
     "event_id": {"type": "string", "pattern": "^evt-[0-9]{8}$"},
     "event_type": {"type": "string", "pattern": "^[a-z]+\\.[a-z]+$"},

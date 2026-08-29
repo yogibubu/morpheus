@@ -1,4 +1,4 @@
-# MORPHEUS 0.1.0rc6 quick start
+# MORPHEUS 0.1.0rc8 quick start
 
 MORPHEUS constructs and solves auditable semiexperimental equilibrium-structure
 models from isotopologue rotational constants, vibrational/electronic
@@ -17,7 +17,7 @@ python3.11 -m venv /chosen/path/morpheus-venv
 source /chosen/path/morpheus-venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install --find-links /path/to/morpheus-release/wheels \
-  matrix-morpheus==0.1.0rc6
+  matrix-morpheus==0.1.0rc8
 morpheus doctor
 ```
 
@@ -102,5 +102,5 @@ The release validator installs into a fresh virtual environment and runs the
 bundled water fit without access to the source repository:
 
 ```bash
-python3 verify_morpheus_install.py /path/to/MORPHEUS-0.1.0rc6
+python3 verify_morpheus_install.py /path/to/MORPHEUS-0.1.0rc8
 ```

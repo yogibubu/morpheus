@@ -482,11 +482,11 @@ def _is_c2_perpendicular(label: str) -> bool:
 
 
 def _oop_sign(orig, mapped):
-    i, j, k, l = orig
-    if mapped[1] != j:
+    center, plane1, plane2, out = orig
+    if mapped[0] != center:
         return 1.0
-    outer = [i, k, l]
-    mapped_outer = [mapped[0], mapped[2], mapped[3]]
+    outer = [plane1, plane2, out]
+    mapped_outer = [mapped[1], mapped[2], mapped[3]]
     perm = [outer.index(x) if x in outer else -1 for x in mapped_outer]
     if -1 in perm:
         return 1.0
@@ -519,8 +519,8 @@ def primitive_permutation(prims, atom_map):
             angle_map.setdefault((j, tuple(sorted((a, b)))), i)
         elif p.kind == "dihedral":
             dihed_map.setdefault(tuple(p.atoms), i)
-        elif p.kind == "out_of_plane":
-            oop_map.setdefault(tuple(p.atoms), i)
+        elif p.kind in {"out_of_plane", "out_of_plane_height"}:
+            oop_map.setdefault((p.kind, tuple(p.atoms)), i)
         elif p.kind == "linear_bend":
             a, j, b = p.atoms
             linear_map.setdefault((j, tuple(sorted((a, b))), p.mode), i)
@@ -546,11 +546,13 @@ def primitive_permutation(prims, atom_map):
                     sign[i] = -1.0
             if idx is not None:
                 perm_idx[i] = idx
-        elif p.kind == "out_of_plane":
-            idx = oop_map.get(mapped_atoms)
+        elif p.kind in {"out_of_plane", "out_of_plane_height"}:
+            idx = oop_map.get((p.kind, mapped_atoms))
             if idx is None:
-                for cand, ci in oop_map.items():
-                    if cand[1] != mapped_atoms[1]:
+                for (candidate_kind, cand), ci in oop_map.items():
+                    if candidate_kind != p.kind:
+                        continue
+                    if cand[0] != mapped_atoms[0]:
                         continue
                     if set(cand) == set(mapped_atoms):
                         perm_idx[i] = ci

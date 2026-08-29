@@ -100,7 +100,6 @@ def group_label(elements, linear=False):
 
     has_i = any(lab == "i" for lab in labels)
     has_sigma = any(lab.startswith("sigma") for lab in labels)
-    has_c2 = any(lab.startswith("C2") for lab in labels)
     has_s = any(lab.startswith("S") for lab in labels)
 
     t_ops = [lab for lab in labels if lab.endswith("_t")]
@@ -147,7 +146,7 @@ def group_label(elements, linear=False):
     if n_t >= 6:
         return "Th" if has_i else "Td" if has_sigma else "T"
 
-    if has_s and (has_c2 or has_c2_perp) and not has_sigma:
+    if has_s and has_c2_perp and not has_sigma:
         n_eff = nmax if nmax > 1 else snmax
         return f"D{n_eff}d"
     if has_s and not has_sigma and not has_i:
@@ -160,7 +159,7 @@ def group_label(elements, linear=False):
             return f"C{nmax}h"
         if has_sigma:
             return f"C{nmax}v"
-        if has_c2 or has_c2_perp:
+        if has_c2_perp:
             return f"D{nmax}"
         return f"C{nmax}"
 

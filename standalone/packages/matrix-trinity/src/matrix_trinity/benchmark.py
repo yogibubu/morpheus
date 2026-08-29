@@ -80,9 +80,17 @@ def run_optimizer_validation_benchmark(
     runs: list[OptimizerBenchmarkRun] = []
     for case in selected:
         case_dir = root / case.name
-        evaluator = _write_quadratic_evaluator(case_dir / "quadratic_point.py", case)
         for coordinate_kind in (("cartesian", "sonic") if include_sonic else ("cartesian",)):
             xyzin, coordinates = _write_case_optimizer_input(case_dir, case, coordinate_kind=coordinate_kind)
+            framed_case = _case_in_optimizer_frame(
+                case,
+                xyzin=xyzin,
+                coordinate_kind=coordinate_kind,
+            )
+            evaluator = _write_quadratic_evaluator(
+                case_dir / coordinate_kind / "quadratic_point.py",
+                framed_case,
+            )
             model = coordinate_model_from_xyzin(xyzin, kind=coordinate_kind, coordinates=coordinates)
             initial_hessian = np.eye(len(model.labels), dtype=float) * 2.0
             for policy, settings in (
@@ -126,7 +134,7 @@ def run_optimizer_validation_benchmark(
                         np.mean(
                             (
                                 np.asarray(result.final_coordinates_angstrom, dtype=float)
-                                - np.asarray(case.target_coordinates_angstrom, dtype=float)
+                                - np.asarray(framed_case.target_coordinates_angstrom, dtype=float)
                             )
                             ** 2
                         )
@@ -200,6 +208,39 @@ def _write_case_optimizer_input(
     names = tuple(str(gic.name) for gic in definition.gics)
     labels = tuple(str(gic.identifier) for gic in definition.gics)
     return xyzin, names or labels
+
+
+def _case_in_optimizer_frame(
+    case: OptimizerBenchmarkCase,
+    *,
+    xyzin: Path,
+    coordinate_kind: str,
+) -> OptimizerBenchmarkCase:
+    """Express the benchmark target in the Cartesian frame persisted by ORACLE."""
+
+    if coordinate_kind == "cartesian":
+        return case
+    from matrix_chem import read_enriched_xyz
+
+    persisted_start = np.asarray(read_enriched_xyz(xyzin).coordinates_angstrom, dtype=float)
+    source_start = np.asarray(case.start_coordinates_angstrom, dtype=float)
+    source_center = np.mean(source_start, axis=0)
+    persisted_center = np.mean(persisted_start, axis=0)
+    covariance = (source_start - source_center).T @ (persisted_start - persisted_center)
+    left, _singular, right_t = np.linalg.svd(covariance)
+    rotation = left @ right_t
+    if np.linalg.det(rotation) < 0.0:
+        left[:, -1] *= -1.0
+        rotation = left @ right_t
+    transformed_target = (
+        np.asarray(case.target_coordinates_angstrom, dtype=float) - source_center
+    ) @ rotation + persisted_center
+    return OptimizerBenchmarkCase(
+        name=case.name,
+        atoms=case.atoms,
+        start_coordinates_angstrom=persisted_start,
+        target_coordinates_angstrom=transformed_target,
+    )
 
 
 def _write_quadratic_evaluator(path: Path, case: OptimizerBenchmarkCase) -> Path:

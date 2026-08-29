@@ -6,7 +6,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .definition import GICDefinition, build_gic_b_matrix, evaluate_gic_values
+from .evaluation import build_gic_b_matrix, evaluate_gic_values
+from .models import GICDefinition
 
 
 @dataclass(frozen=True)

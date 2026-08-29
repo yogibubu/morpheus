@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from matrix_core import format_substitutions, read_xyzin_isotopologue_records
+from matrix_chem import (
+    format_substitutions,
+    read_xyzin_isotopologue_records,
+)
 from matrix_morpheus import MorpheusSection, read_morpheus_section
 
 from .commands import OracleGuiCommand, semiexp_command

@@ -31,7 +31,7 @@ structural relations:
 ROH(Frozen,Value=0.9660)=R(6,7)
 ACOH(Frozen,Value=106.04)=A(4,6,7)
 HNH(Frozen,Value=104.98)=A(3,2,10)
-NH2WAG(Frozen,Value=57.67)=U(1,2,3,10)
+NH2WAG(Frozen,Value=57.67)=U(2,10,3,1)
 ```
 
 Run:

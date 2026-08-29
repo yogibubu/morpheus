@@ -1,4 +1,4 @@
-"""Reproducible language-contract benchmark for The ONE."""
+"""Reproducible language-contract benchmark for Keymaker."""
 
 from __future__ import annotations
 
@@ -119,7 +119,7 @@ class LanguageIntentBenchmarkReport:
 
 def load_intent_benchmark(path: Path | str) -> tuple[IntentBenchmarkCase, ...]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if data.get("schema") != "matrix.the_one.intent-benchmark.v1":
+    if data.get("schema") != "matrix.keymaker.intent-benchmark.v1":
         raise ValueError("unsupported intent benchmark schema")
     return tuple(IntentBenchmarkCase.from_dict(item) for item in data.get("cases", ()))
 
@@ -151,7 +151,7 @@ def load_language_intent_benchmark(
     path: Path | str,
 ) -> tuple[LanguageIntentBenchmarkCase, ...]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if data.get("schema") != "matrix.the_one.freeform-intent-benchmark.v1":
+    if data.get("schema") != "matrix.keymaker.freeform-intent-benchmark.v1":
         raise ValueError("unsupported free-form intent benchmark schema")
     return tuple(
         LanguageIntentBenchmarkCase(

@@ -15,7 +15,7 @@ from matrix_chem.structural_corrections import (
     cv_radial_radius_aware_alpha_milliangstrom as oracle_cv_radial_radius_aware_alpha_milliangstrom,
 )
 
-from .definition import GICDefinition, GICPrimitive
+from .models import GICDefinition, GICPrimitive
 from .survibfit.primitives import Primitive, eval_primitives
 from .survibfit.transforms import internal_to_cart_coords
 
@@ -284,9 +284,16 @@ def _survibfit_primitive_from_gic_primitive(primitive: GICPrimitive) -> Primitiv
     if primitive.function == "A":
         return Primitive("angle", atoms)
     if primitive.function == "L":
-        return Primitive("linear_bend", atoms, mode=int(primitive.mode))
+        return Primitive(
+            "linear_bend",
+            atoms,
+            mode=int(primitive.mode),
+            ref=tuple(int(atom) - 1 for atom in primitive.ref_atoms),
+        )
     if primitive.function == "D":
         return Primitive("dihedral", atoms)
     if primitive.function == "U":
         return Primitive("out_of_plane", atoms)
+    if primitive.function == "H":
+        return Primitive("out_of_plane_height", atoms)
     raise ValueError(f"unsupported primitive function for CV-radial correction: {primitive.function}")

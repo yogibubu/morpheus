@@ -12,8 +12,28 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 
+from matrix_core import (
+    CalculationLaunchAuthorization,
+    CalculationLaunchError,
+    CalculationLaunchPlan,
+    CalculationResources,
+    authorized_parent_plan_from_environment,
+    build_calculation_launch_plan,
+    require_calculation_launch_or_parent_authorization,
+)
 
-REMOTE_ENGINES = ("gdv32", "g16", "molpro", "orca", "mrcc", "cfour", "xtb", "pyscf")
+
+REMOTE_ENGINES = (
+    "gdv32",
+    "g16",
+    "molpro",
+    "orca",
+    "mrcc",
+    "cfour",
+    "xtb",
+    "pyscf",
+    "et",
+)
 DEFAULT_REMOTE_HOST = "oracle"
 DEFAULT_REMOTE_ROOT = "~/matrix"
 PROMOTE_MODES = (
@@ -93,6 +113,26 @@ class RemoteQMJobStatus:
     pid: str = ""
     log: str = ""
 
+    @property
+    def canonical_state(self) -> str:
+        """Normalize ORACLE/MAC-STUDIO matrix-status vocabulary."""
+
+        state = self.state.strip().upper()
+        return {
+            "RUNNING": "running",
+            "STARTING": "running",
+            "FINISHED": "completed",
+            "COMPLETED": "completed",
+            "FAILED": "failed",
+            "ERROR": "failed",
+            "CANCELLED": "cancelled",
+            "INTERRUPTED": "interrupted",
+        }.get(state, "unknown")
+
+    @property
+    def terminal(self) -> bool:
+        return self.canonical_state in {"completed", "failed", "cancelled", "interrupted"}
+
 
 @dataclass(frozen=True)
 class RemoteQMFetchResult:
@@ -125,6 +165,8 @@ def remote_qm_submit(
     ssh_executable: str = "ssh",
     scp_executable: str = "scp",
     runner: SubprocessRunner = subprocess.run,
+    resources: CalculationResources | None = None,
+    launch_authorization: CalculationLaunchAuthorization | None = None,
 ) -> RemoteQMSubmitResult:
     if engine not in REMOTE_ENGINES:
         raise RemoteQMError(f"unsupported remote engine: {engine}")
@@ -133,6 +175,28 @@ def remote_qm_submit(
         raise RemoteQMError(f"input file not found: {source}")
     remote_inputs = f"{remote_root.rstrip('/')}/inputs"
     remote_input = f"{remote_inputs}/{source.name}"
+    parent = authorized_parent_plan_from_environment()
+    effective_resources = resources or (None if parent is None else parent.resources)
+    if effective_resources is None:
+        raise CalculationLaunchError(
+            "remote QM launch requires explicit process, thread, and memory limits"
+        )
+    launch_plan = prepare_remote_qm_launch_plan(
+        source,
+        engine=engine,
+        host=host,
+        remote_root=remote_root,
+        extra_args=extra_args,
+        resources=effective_resources,
+    )
+    require_calculation_launch_or_parent_authorization(
+        launch_plan,
+        launch_authorization,
+    )
+    if engine in {"gdv32", "g16"}:
+        from matrix_gaussian import validate_gaussian_input_route_policy
+
+        validate_gaussian_input_route_policy(source)
     _run_checked(
         _cmd(ssh_executable, host, _remote_bash(f"mkdir -p {_remote_arg(remote_inputs)}")),
         runner=runner,
@@ -143,8 +207,11 @@ def remote_qm_submit(
         runner=runner,
         context="copy QM input to remote host",
     )
+    resource_environment = _remote_resource_environment(effective_resources)
     submit_cmd = " ".join(
         [
+            "env",
+            *(_q(item) for item in resource_environment),
             _remote_arg(f"{remote_root.rstrip('/')}/bin/matrix-submit"),
             _q(engine),
             _remote_arg(remote_input),
@@ -168,6 +235,54 @@ def remote_qm_submit(
         native_output=parsed.get("native_output", ""),
         stdout=parsed.get("stdout", ""),
         raw_output=completed.stdout,
+    )
+
+
+def prepare_remote_qm_launch_plan(
+    input_path: Path | str,
+    *,
+    engine: str,
+    host: str,
+    remote_root: str = DEFAULT_REMOTE_ROOT,
+    extra_args: Sequence[str] = (),
+    resources: CalculationResources,
+) -> CalculationLaunchPlan:
+    """Prepare the exact remote submission envelope without opening SSH."""
+
+    if engine not in REMOTE_ENGINES:
+        raise RemoteQMError(f"unsupported remote engine: {engine}")
+    source = Path(input_path).expanduser().resolve()
+    if not source.is_file():
+        raise RemoteQMError(f"input file not found: {source}")
+    remote_input = f"{remote_root.rstrip('/')}/inputs/{source.name}"
+    command = (
+        "env",
+        *_remote_resource_environment(resources),
+        f"{remote_root.rstrip('/')}/bin/matrix-submit",
+        engine,
+        remote_input,
+        *(str(arg) for arg in extra_args),
+    )
+    return build_calculation_launch_plan(
+        backend=f"remote/{engine}",
+        host=host,
+        workdir=source.parent,
+        input_path=source,
+        command=command,
+        resources=resources,
+    )
+
+
+def _remote_resource_environment(resources: CalculationResources) -> tuple[str, str]:
+    """Translate the authorized per-job envelope into remote launcher settings."""
+
+    memory_gb = float(resources.memory_per_job_gb)
+    memory_value = (
+        str(int(memory_gb)) if memory_gb.is_integer() else format(memory_gb, ".15g")
+    )
+    return (
+        f"MATRIX_QM_NPROC={resources.threads_per_job}",
+        f"MATRIX_QM_MEM={memory_value}GB",
     )
 
 
@@ -238,6 +353,8 @@ def remote_qm_output_completed_normally(path: Path | str, engine: str) -> bool:
         return "normal termination of xtb" in text.lower()
     if normalized == "pyscf":
         return "MATRIX PYSCF TERMINATED NORMALLY" in text
+    if normalized == "et":
+        return "eT terminated successfully!" in text
     return True
 
 
@@ -637,6 +754,8 @@ def remote_fetch_cli_hint(result: RemoteQMFetchResult) -> str:
             "PySCF output fetched. For self-reporting Hessian jobs use "
             "--promote pyscf-hessian --xyzin to normalize Hessian and frequencies."
         )
+    if result.engine == "et":
+        return "eT output fetched; LINK supplies numerical derivatives when required."
     return "Output fetched. No promotion was requested."
 
 

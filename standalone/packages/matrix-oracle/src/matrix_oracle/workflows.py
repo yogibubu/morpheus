@@ -67,7 +67,7 @@ ORACLE_GUI_WINDOWS: tuple[WindowSpec, ...] = (
             "PRIMITIVES",
         ),
         capabilities=(
-            "import XYZ, Z-matrix, QM geometry and SMILES/RDKit sources",
+            "import XYZ, Z-matrix, QM geometry and internal SWITCH SMILES sources",
             "run symmetry detection once with explicit thresholds",
             "materialize topology, synthons and the primitive/B source for downstream tools",
         ),

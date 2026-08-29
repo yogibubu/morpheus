@@ -4,14 +4,29 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "matrix-rovib"
-version = "0.1.0rc5"
+version = "0.1.0rc8"
 description = "Rotational, vibrational and rovibrational contracts for MATRIX"
 requires-python = ">=3.11"
 dependencies = [
-  "matrix-core==0.1.0rc5",
-  "matrix-chem==0.1.0rc5",
+  "matrix-core==0.1.0rc8",
+  "matrix-chem==0.1.0rc8",
+  "matrix-numerics==0.1.0rc8",
   "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+adapters = [
+  "matrix-gaussian==0.1.0rc8",
+  "matrix-qm==0.1.0rc8",
+  "matrix-thermo==0.1.0rc8",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+
+[tool.ruff.lint]
+# Audit the MATRIX-adapted WMS-Rot engine without changing its physics.
+extend-select = ["F"]

@@ -1,21 +1,60 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import warnings
+from dataclasses import dataclass, replace
+from functools import lru_cache
+from itertools import combinations, permutations
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Iterable
 
 import numpy as np
+from matrix_numerics import (
+    normalized_matrix_condition,
+    numerical_matrix_rank,
+    select_rank_revealing_rows,
+    singular_spectrum,
+    spectrum_rank,
+)
+from matrix_chem import linear_bend_reference_atom
 
+from matrix_chem.local_perception import (
+    LOCAL_COORDINATION_TEMPLATES,
+    LOCAL_TEMPLATE_MIN_MARGIN,
+    LOCAL_TEMPLATE_RMS_THRESHOLD,
+    LocalCoordinationMatch,
+    LocalCoordinationTemplate,
+    LocalPerceptionSettings,
+    infer_local_pseudogroup,
+    ligand_pair_cosine,
+    local_coordination_match,
+    local_ligand_equivalence_classes,
+    local_ligand_unit_vectors,
+    nearest_cosine_class,
+    ring_local_pseudogroup,
+    sorted_pair_cosines,
+    template_pair_cosine_classes,
+)
 from matrix_smith.survibfit.geometry import angle
 from matrix_smith.survibfit.pipeline import b_matrix_analytic
-from matrix_smith.survibfit.primitives import Primitive
+from matrix_smith.analytic_salc import cyclic_out_of_plane_coefficients
+from matrix_smith.survibfit.primitives import Primitive, eval_primitive
 from matrix_chem.topology.covalent_radii import covalent_radius
 from matrix_chem.topology.elements import atomic_number
 from matrix_chem.topology.pipeline import build_topology_objects
 from matrix_chem.topology.ringset import RingSet
 from matrix_smith.policy import LINEAR_ANGLE_DEGREES
 
+from ..policy import (
+    AROMATIC_LOCAL_MODEL_DIAGNOSTIC,
+    CANONICAL_SALC_DIAGNOSTIC,
+    MAX_NORMALIZED_SONIC_CONDITION,
+    SONIC_CONSTRUCTION_POLICY,
+    normalize_ring_puckering_model,
+)
+from ..fallback_ledger import make_fallback_event, merge_fallback_events
+from ..models import FallbackEvent
 from .model import (
     GICDefinition,
     _definition_coordinate_kind_counts,
@@ -27,36 +66,10 @@ from .model import (
 
 LINEAR_THRESHOLD_RAD = np.deg2rad(LINEAR_ANGLE_DEGREES)
 COLLAPSED_BOND_THRESHOLD_ANGSTROM = 0.2
-LOCAL_ZEFF_TOLERANCE = 5.0e-4
-LOCAL_DISTANCE_TOLERANCE_ANGSTROM = 1.0e-3
-LOCAL_TEMPLATE_RMS_THRESHOLD = 1.2e-1
-LOCAL_TEMPLATE_MIN_MARGIN = 2.0e-2
-LOCAL_ANGLE_CLASS_TOLERANCE = 2.0e-2
-LOCAL_THRESHOLD_SENSITIVITY_FRACTION = 1.0e-1
 LOCAL_TORSION_STABILITY_THRESHOLD = 1.0e-4
-
-
-@dataclass(frozen=True)
-class LocalSALCSettings:
-    """Thresholds controlling local equivalence and template recognition."""
-
-    zeff_tolerance: float = LOCAL_ZEFF_TOLERANCE
-    distance_tolerance_angstrom: float = LOCAL_DISTANCE_TOLERANCE_ANGSTROM
-    template_rms_threshold: float = LOCAL_TEMPLATE_RMS_THRESHOLD
-    template_min_margin: float = LOCAL_TEMPLATE_MIN_MARGIN
-    angle_class_tolerance: float = LOCAL_ANGLE_CLASS_TOLERANCE
-
-    def __post_init__(self) -> None:
-        for name, value in (
-            ("zeff_tolerance", self.zeff_tolerance),
-            ("distance_tolerance_angstrom", self.distance_tolerance_angstrom),
-            ("template_rms_threshold", self.template_rms_threshold),
-            ("angle_class_tolerance", self.angle_class_tolerance),
-        ):
-            if not np.isfinite(value) or value <= 0.0:
-                raise ValueError(f"{name} must be a positive finite number")
-        if not np.isfinite(self.template_min_margin) or self.template_min_margin < 0.0:
-            raise ValueError("template_min_margin must be a non-negative finite number")
+# Backward-compatible public name.  The numerical policy now lives in the
+# shared kernel; ORACLE is the semantic producer in the frozen contract.
+LocalSALCSettings = LocalPerceptionSettings
 
 
 @dataclass(frozen=True)
@@ -66,6 +79,7 @@ class GICForgePythonCoordinate:
     terms: tuple[tuple[float, Primitive], ...]
     type_index: int = 0
     diagnostic: str = ""
+    fallback_events: tuple[FallbackEvent, ...] = ()
 
     @property
     def dominant_kind(self) -> str:
@@ -73,23 +87,24 @@ class GICForgePythonCoordinate:
 
 
 @dataclass(frozen=True)
-class LocalCoordinationTemplate:
-    name: str
-    directions: tuple[tuple[float, float, float], ...]
+class _CoordinateBasisAudit:
+    """One typed numerical snapshot used by SONIC basis selection."""
+
+    rows: np.ndarray
+    normalized_rows: np.ndarray
+    rank: int | None
+    condition: float | None
 
 
 @dataclass(frozen=True)
-class LocalCoordinationMatch:
-    """Rotation/permutation-invariant local-template decision."""
-
-    template: LocalCoordinationTemplate | None
-    best_template: LocalCoordinationTemplate | None
-    score: float
-    margin: float
-    status: str
-    rms_headroom: float = float("inf")
-    margin_headroom: float = float("inf")
-    sensitivity: str = "NOT_APPLICABLE"
+class _RingCoordinateDomain:
+    index: int
+    atoms: tuple[int, ...]
+    local_group: str
+    confidence: str
+    operation_count: int
+    aromatic: bool
+    diagnostic_suffix: str
 
 
 @dataclass(frozen=True)
@@ -102,6 +117,7 @@ class GICForgePythonModel:
     target_rank: int
     primitive_fallback: bool
     diagnostics: dict[str, object]
+    fallback_events: tuple[FallbackEvent, ...] = ()
 
     def to_definition(self, *, workdir: Path | None = None) -> GICDefinition:
         primitive_basis = _primitive_basis(self.coordinates)
@@ -152,78 +168,100 @@ class GICForgePythonModel:
         return definition
 
 
+def _validated_topology_bonds(
+    bonds: Iterable[tuple[int, int]],
+    *,
+    natoms: int,
+) -> tuple[tuple[int, int], ...]:
+    """Return a canonical zero-based copy of an ORACLE-owned bond graph."""
+
+    canonical: set[tuple[int, int]] = set()
+    for pair in bonds:
+        if len(pair) != 2:
+            raise ValueError("topology bonds must contain exactly two atom indices")
+        first, second = (int(value) for value in pair)
+        if first == second or first < 0 or second < 0 or first >= natoms or second >= natoms:
+            raise ValueError("topology bond contains an invalid atom index")
+        canonical.add(tuple(sorted((first, second))))
+    return tuple(sorted(canonical))
+
+
 def build_gicforge_python_model(
     atom_symbols: Iterable[str],
     coordinates_angstrom: np.ndarray,
     *,
+    topology_bonds: Iterable[tuple[int, int]] | None = None,
     impdih: bool = False,
     onedih: bool = True,
     svd_local: bool = False,
     local_salc: bool = False,
+    xy3_torsions: bool = False,
+    xy2_torsions: bool = False,
     separate_exocyclic_torsions: bool = False,
     max_linear_angle_pairs_per_center: int = 3,
     linear_threshold: float = LINEAR_THRESHOLD_RAD,
     primitive_fallback: bool = True,
     local_salc_settings: LocalSALCSettings | None = None,
+    ring_puckering_model: str = "triangular_flap",
 ) -> GICForgePythonModel:
     # IMPDIH is retained in the low-level signature only for source
-    # compatibility.  The native ORACLE/SMITH model always uses U; Gaussian
-    # conversion is performed only while writing a G16 input file.
+    # compatibility.  The native default is the triangular-flap chart;
+    # Gaussian conversion of its analytic dihedral kernel is performed only
+    # while writing a G16 input file.
     impdih = False
+    model_fallback_events: list[FallbackEvent] = []
     atoms = tuple(str(atom).strip() for atom in atom_symbols)
     coords = np.asarray(coordinates_angstrom, dtype=float)
     if coords.shape != (len(atoms), 3):
         raise ValueError(f"Expected coordinate shape ({len(atoms)}, 3), got {coords.shape}")
     atomic_numbers = tuple(atomic_number(atom) for atom in atoms)
     local_settings = local_salc_settings or LocalSALCSettings()
-    _cg, graph, ringset, _synthons, aromaticity = build_topology_objects(
-        coords, np.asarray(atomic_numbers)
+    ring_model = normalize_ring_puckering_model(ring_puckering_model)
+    graph, ringset, aromatic_atoms = _gicforge_topology_context(
+        atoms,
+        atomic_numbers,
+        coords,
+        topology_bonds=topology_bonds,
     )
-    _validate_no_spurious_hh_contacts(coords, atomic_numbers, graph.bonds)
-    if _remove_collapsed_bonds(graph, coords):
-        ringset = RingSet(graph, coords=coords)
     primitive_blocks = _fortran_like_primitive_blocks(
         graph,
         coords,
         atomic_numbers=atomic_numbers,
         ringset=ringset,
-        aromatic_atoms=frozenset(int(atom) for atom in aromaticity.aromatic_atoms),
+        aromatic_atoms=aromatic_atoms,
         impdih=impdih,
         onedih=onedih,
         svd_local=svd_local,
         local_salc=local_salc,
+        xy3_torsions=xy3_torsions,
+        xy2_torsions=xy2_torsions,
         separate_exocyclic_torsions=separate_exocyclic_torsions,
         max_linear_angle_pairs_per_center=max_linear_angle_pairs_per_center,
         linear_threshold=linear_threshold,
         local_salc_settings=local_settings,
+        ring_puckering_model=ring_model,
     )
-    primitive_candidates = tuple(coord for block in primitive_blocks for coord in block)
     target = _target_rank(coords, graph)
-    candidates = primitive_candidates
-    if primitive_fallback and len(candidates) < target:
-        primitive_blocks = _primitive_fallback_blocks(
-            graph,
-            coords,
-            atomic_numbers=atomic_numbers,
-            ringset=ringset,
-            impdih=impdih,
-            linear_threshold=linear_threshold,
-        )
-        candidates = tuple(coord for block in primitive_blocks for coord in block)
-    if not primitive_fallback and len(candidates) < target:
-        raise ValueError(
-            f"GICForge Python candidates below vibrational rank ({len(candidates)} < {target})"
-        )
-    if len(candidates) < target:
-        raise ValueError(
-            f"Primitive candidates below vibrational rank ({len(candidates)} < {target})"
-        )
-    coordinates = _prune_type_local(candidates, coords, target_rank=target, block_pruning=svd_local)
+    candidates, coordinates, initial_events = _initial_gicforge_selection(
+        tuple(coord for block in primitive_blocks for coord in block),
+        graph=graph,
+        ringset=ringset,
+        coords=coords,
+        atomic_numbers=atomic_numbers,
+        target=target,
+        primitive_fallback=primitive_fallback,
+        impdih=impdih,
+        linear_threshold=linear_threshold,
+        svd_local=svd_local,
+    )
+    model_fallback_events.extend(initial_events)
+    used_augmented_fallback = False
     if primitive_fallback and (
-        len(coordinates) < target
-        or (svd_local and _coordinate_b_rank(coordinates, coords) < target)
+        len(coordinates) < target or _coordinate_b_rank(coordinates, coords) < target
     ):
-        primitive_blocks = _primitive_fallback_blocks(
+        used_augmented_fallback = True
+        selected_rank_before_augmentation = _coordinate_b_rank(coordinates, coords)
+        fallback_blocks = _primitive_fallback_blocks(
             graph,
             coords,
             atomic_numbers=atomic_numbers,
@@ -231,19 +269,115 @@ def build_gicforge_python_model(
             impdih=impdih,
             linear_threshold=linear_threshold,
         )
-        candidates = tuple(coord for block in primitive_blocks for coord in block)
-        if len(candidates) < target:
-            raise ValueError(
-                f"Primitive candidates below vibrational rank ({len(candidates)} < {target})"
-            )
-        coordinates = _prune_type_local(
-            candidates, coords, target_rank=target, block_pruning=svd_local
+        fallback_candidates = _without_polyhedral_axis_coordinates(
+            tuple(coordinate for block in fallback_blocks for coordinate in block),
+            polyhedral_centers=_polyhedral_catalog_centers(candidates),
         )
-        if len(coordinates) < target or _coordinate_b_rank(coordinates, coords) < target:
+        augmented_candidates = tuple(dict.fromkeys((*candidates, *fallback_candidates)))
+        if len(augmented_candidates) < target:
             raise ValueError(
-                f"GICForge Python primitive fallback did not reach vibrational rank "
+                "Augmented primitive candidates below vibrational rank "
+                f"({len(augmented_candidates)} < {target})"
+            )
+        augmented_rows = _coordinate_b_matrix(augmented_candidates, coords)
+        row_norms = np.linalg.norm(augmented_rows, axis=1)
+        normalized_rows = np.vstack(
+            [
+                row / norm if norm > 1.0e-12 else row
+                for row, norm in zip(augmented_rows, row_norms, strict=True)
+            ]
+        )
+        selection = select_rank_revealing_rows(
+            normalized_rows,
+            target_rank=target,
+            tolerance=1.0e-10,
+            priorities=tuple(
+                0 if _is_analytic_salc(coordinate) else 1 for coordinate in augmented_candidates
+            ),
+            tie_tolerance=1.0e-12,
+        )
+        candidates = augmented_candidates
+        coordinates = tuple(augmented_candidates[index] for index in selection.indices)
+        if selection.rank < target or _coordinate_b_rank(coordinates, coords) < target:
+            raise ValueError(
+                "GICForge Python augmented fallback did not reach vibrational rank "
                 f"({len(coordinates)} coordinates for target {target})"
             )
+        model_fallback_events.append(
+            make_fallback_event(
+                stage="SMITH_RANK_SELECTION",
+                algorithm_id="AUGMENTED_PRIMITIVE_RANK_RECOVERY",
+                trigger="TYPE_LOCAL_SELECTION_BELOW_TARGET_RANK",
+                rank_before=selected_rank_before_augmentation,
+                rank_after=selection.rank,
+            )
+        )
+    if used_augmented_fallback:
+        coordinates = _conditioned_coordinate_basis(
+            candidates,
+            coordinates,
+            coords,
+            target_rank=target,
+            preserve_special=False,
+        )
+    elif len(coordinates) == target and _coordinate_b_rank(coordinates, coords) == target:
+        original_coordinates = coordinates
+        try:
+            conditioned_coordinates = _conditioned_coordinate_basis(
+                candidates,
+                coordinates,
+                coords,
+                target_rank=target,
+                preserve_special=True,
+            )
+            coordinates = (
+                conditioned_coordinates
+                if _cage_chart_semantics_preserved(
+                    original_coordinates,
+                    conditioned_coordinates,
+                )
+                else original_coordinates
+            )
+        except ValueError:
+            if not primitive_fallback:
+                raise
+            fallback_blocks = _primitive_fallback_blocks(
+                graph,
+                coords,
+                atomic_numbers=atomic_numbers,
+                ringset=ringset,
+                impdih=impdih,
+                linear_threshold=linear_threshold,
+            )
+            fallback_candidates = _without_polyhedral_axis_coordinates(
+                tuple(coordinate for block in fallback_blocks for coordinate in block),
+                polyhedral_centers=_polyhedral_catalog_centers(candidates),
+            )
+            augmented_candidates = tuple(dict.fromkeys((*candidates, *fallback_candidates)))
+            conditioned_coordinates = _conditioned_coordinate_basis(
+                augmented_candidates,
+                coordinates,
+                coords,
+                target_rank=target,
+                preserve_special=True,
+            )
+            if _cage_chart_semantics_preserved(
+                original_coordinates,
+                conditioned_coordinates,
+            ):
+                coordinates = conditioned_coordinates
+                candidates = augmented_candidates
+                model_fallback_events.append(
+                    make_fallback_event(
+                        stage="SMITH_CONDITIONING",
+                        algorithm_id="AUGMENTED_CONDITIONING_RECOVERY",
+                        trigger="PRIMARY_CONDITIONING_COULD_NOT_PRESERVE_EXACT_CHART",
+                        rank_before=target,
+                        rank_after=target,
+                    )
+                )
+            else:
+                coordinates = original_coordinates
     diagnostics = _python_model_diagnostics(
         candidates,
         coordinates,
@@ -251,10 +385,13 @@ def build_gicforge_python_model(
         target_rank=target,
         svd_local=svd_local,
         local_salc=local_salc,
+        xy3_torsions=xy3_torsions,
+        xy2_torsions=xy2_torsions,
         separate_exocyclic_torsions=separate_exocyclic_torsions,
         onedih=onedih,
         max_linear_angle_pairs_per_center=max_linear_angle_pairs_per_center,
         local_salc_settings=local_settings,
+        ring_puckering_model=ring_model,
     )
     return GICForgePythonModel(
         atom_symbols=atoms,
@@ -265,7 +402,162 @@ def build_gicforge_python_model(
         target_rank=target,
         primitive_fallback=primitive_fallback,
         diagnostics=diagnostics,
+        fallback_events=merge_fallback_events(
+            tuple(model_fallback_events),
+            tuple(
+                event
+                for coordinate in coordinates
+                for event in coordinate.fallback_events
+            ),
+        ),
     )
+
+
+def _gicforge_topology_context(
+    atoms: tuple[str, ...],
+    atomic_numbers: tuple[int, ...],
+    coords: np.ndarray,
+    *,
+    topology_bonds: Iterable[tuple[int, int]] | None,
+):
+    """Build the frozen or perceived topology consumed by primitive generation."""
+
+    _cg, perceived_graph, perceived_ringset, _synthons, aromaticity = build_topology_objects(
+        coords, np.asarray(atomic_numbers)
+    )
+    frozen_bonds = (
+        _validated_topology_bonds(topology_bonds, natoms=len(atoms))
+        if topology_bonds is not None
+        else None
+    )
+    if frozen_bonds is None:
+        graph = perceived_graph
+        ringset = perceived_ringset
+    else:
+        adjacency = [set() for _atom in atoms]
+        for first, second in frozen_bonds:
+            adjacency[first].add(second)
+            adjacency[second].add(first)
+        graph = SimpleNamespace(
+            natoms=len(atoms),
+            Z=np.asarray(atomic_numbers, dtype=int),
+            coords=coords,
+            bonds=list(frozen_bonds),
+            adjacency=adjacency,
+            bonds_are_canonical_sorted=True,
+            hydrogen_bridges=(),
+        )
+        ringset = RingSet(graph, coords=coords)
+    _validate_no_spurious_hh_contacts(coords, atomic_numbers, graph.bonds)
+    if frozen_bonds is None and _remove_collapsed_bonds(graph, coords):
+        ringset = RingSet(graph, coords=coords)
+    return (
+        graph,
+        ringset,
+        frozenset(int(atom) for atom in aromaticity.aromatic_atoms),
+    )
+
+
+def _initial_gicforge_selection(
+    primitive_candidates: tuple[GICForgePythonCoordinate, ...],
+    *,
+    graph,
+    ringset,
+    coords: np.ndarray,
+    atomic_numbers: tuple[int, ...],
+    target: int,
+    primitive_fallback: bool,
+    impdih: bool,
+    linear_threshold: float,
+    svd_local: bool,
+) -> tuple[
+    tuple[GICForgePythonCoordinate, ...],
+    tuple[GICForgePythonCoordinate, ...],
+    tuple[FallbackEvent, ...],
+]:
+    """Perform primary candidate completion and exact-rank selection."""
+
+    events: list[FallbackEvent] = []
+    candidates = _without_polyhedral_axis_coordinates(primitive_candidates)
+    if primitive_fallback and len(candidates) < target:
+        initial_count = len(candidates)
+        primitive_blocks = _primitive_fallback_blocks(
+            graph,
+            coords,
+            atomic_numbers=atomic_numbers,
+            ringset=ringset,
+            impdih=impdih,
+            linear_threshold=linear_threshold,
+        )
+        candidates = _without_polyhedral_axis_coordinates(
+            tuple(coord for block in primitive_blocks for coord in block)
+        )
+        events.append(
+            make_fallback_event(
+                stage="SMITH_PRIMITIVE_GENERATION",
+                algorithm_id="PRIMITIVE_FALLBACK_BLOCKS",
+                trigger="PRIMARY_CANDIDATE_POOL_BELOW_TARGET_RANK",
+                rank_before=initial_count,
+                rank_after=len(candidates),
+            )
+        )
+    if not primitive_fallback and len(candidates) < target:
+        raise ValueError(
+            f"GICForge Python candidates below vibrational rank ({len(candidates)} < {target})"
+        )
+    if len(candidates) < target:
+        raise ValueError(
+            f"Primitive candidates below vibrational rank ({len(candidates)} < {target})"
+        )
+    coordinates = _prune_type_local(
+        candidates,
+        coords,
+        target_rank=target,
+        block_pruning=svd_local,
+    )
+    if len(coordinates) != target:
+        return candidates, coordinates, tuple(events)
+    selected_condition = singular_spectrum(
+        _coordinate_b_matrix(tuple(coordinates), coords),
+        absolute_tolerance=0.0,
+    ).condition_number
+    if not np.isfinite(selected_condition) or selected_condition <= 1.0e4:
+        return candidates, coordinates, tuple(events)
+    candidates_for_rank = tuple(
+        coordinate
+        for coordinate in candidates
+        if not (
+            coordinate.dominant_kind == "linear_bend"
+            and any(
+                len(graph.adjacency[primitive.atoms[1]]) >= 3
+                for _coefficient, primitive in coordinate.terms
+                if primitive.kind == "linear_bend"
+            )
+        )
+    )
+    selection = select_rank_revealing_rows(
+        _coordinate_b_matrix(candidates_for_rank, coords),
+        target_rank=target,
+        tolerance=1.0e-10,
+        priorities=tuple(
+            0 if coordinate.dominant_kind in {"linear_bend", "ring"} else 1
+            for coordinate in candidates_for_rank
+        ),
+        tie_tolerance=1.0e-12,
+    )
+    if selection.rank == target:
+        coordinates = tuple(candidates_for_rank[index] for index in selection.indices)
+        events.append(
+            make_fallback_event(
+                stage="SMITH_RANK_SELECTION",
+                algorithm_id="GLOBAL_RANK_REVEALING_RECOVERY",
+                trigger="SELECTED_CHART_CONDITION_EXCEEDED_1E4",
+                rank_before=target,
+                rank_after=selection.rank,
+                condition_before=selected_condition,
+            )
+        )
+    return candidates, coordinates, tuple(events)
 
 
 def _validate_no_spurious_hh_contacts(
@@ -308,6 +600,9 @@ def compare_gicforge_python_to_fortran(
     onedih: bool = True,
     svd_local: bool = False,
     local_salc: bool = False,
+    xy3_torsions: bool = False,
+    xy2_torsions: bool = False,
+    ring_puckering_model: str = "triangular_flap",
 ) -> dict[str, object]:
     workdir = Path(workdir)
     fortran_dir = workdir / "fortran"
@@ -318,6 +613,9 @@ def compare_gicforge_python_to_fortran(
         onedih=onedih,
         svd_local=svd_local,
         local_salc=local_salc,
+        xy3_torsions=xy3_torsions,
+        xy2_torsions=xy2_torsions,
+        ring_puckering_model=ring_puckering_model,
     )
     extra_keywords = []
     if impdih:
@@ -328,6 +626,17 @@ def compare_gicforge_python_to_fortran(
         extra_keywords.append("LOCSVD")
     if local_salc:
         extra_keywords.append("LOCSALC")
+    if xy3_torsions:
+        extra_keywords.append("XY3")
+    if xy2_torsions:
+        extra_keywords.append("XY2")
+    normalized_ring_model = normalize_ring_puckering_model(ring_puckering_model)
+    if normalized_ring_model == "local_out_of_plane":
+        extra_keywords.append("RINGU")
+    elif normalized_ring_model == "endocyclic_dihedral":
+        extra_keywords.append("RINGD")
+    elif normalized_ring_model == "charm":
+        extra_keywords.append("RINGH")
     fortran_definition = define_gics_from_cartesian(
         tuple(atom_symbols),
         np.asarray(coordinates_angstrom, dtype=float),
@@ -356,6 +665,9 @@ def compare_gicforge_python_to_fortran(
                     onedih=onedih,
                     svd_local=svd_local,
                     local_salc=local_salc,
+                    xy3_torsions=xy3_torsions,
+                    xy2_torsions=xy2_torsions,
+                    ring_puckering_model=ring_puckering_model,
                 ).to_definition(workdir=workdir / "python-fortran-frame"),
             )
         )
@@ -417,6 +729,199 @@ def compare_gicforge_python_to_fortran(
     }
 
 
+def _ring_coordinate_domains(
+    selected_rings: list[tuple[int, ...]],
+    *,
+    aromatic_atoms: frozenset[int],
+    effective_atomic_numbers: tuple[float, ...],
+    coords: np.ndarray,
+    settings: LocalSALCSettings,
+) -> tuple[_RingCoordinateDomain, ...]:
+    aromatic_blocks = _aromatic_ring_block_labels(selected_rings, aromatic_atoms)
+    domains: list[_RingCoordinateDomain] = []
+    for ring_index, ring in enumerate(selected_rings, start=1):
+        local_group, confidence, operation_count = _ring_local_pseudogroup(
+            ring,
+            effective_atomic_numbers=effective_atomic_numbers,
+            coords=coords,
+            settings=settings,
+        )
+        aromatic = bool(ring) and all(atom in aromatic_atoms for atom in ring)
+        diagnostic_suffix = (
+            f" AROMATIC_LOCAL_SALC=YES AROMATIC_BLOCK={aromatic_blocks[ring_index - 1]}"
+            if aromatic
+            else ""
+        )
+        domains.append(
+            _RingCoordinateDomain(
+                index=ring_index,
+                atoms=ring,
+                local_group=local_group,
+                confidence=confidence,
+                operation_count=operation_count,
+                aromatic=aromatic,
+                diagnostic_suffix=diagnostic_suffix,
+            )
+        )
+    return tuple(domains)
+
+
+def _ring_bend_block(
+    domains: tuple[_RingCoordinateDomain, ...],
+    *,
+    coords: np.ndarray,
+    svd_local: bool,
+) -> list[GICForgePythonCoordinate]:
+    coordinates: list[GICForgePythonCoordinate] = []
+    for domain in domains:
+        diagnostic = (
+            f"LOCAL_SALC KIND=RING_ANGLE DOMAIN=RING:{domain.index} "
+            f"GROUP={domain.local_group} CONFIDENCE={domain.confidence} "
+            f"OPERATIONS={domain.operation_count}{domain.diagnostic_suffix}"
+        )
+        builder = _cyclic_svd_coordinates if svd_local else _cyclic_coordinates
+        kwargs = {"coords": coords} if svd_local else {}
+        coordinates.extend(
+            builder(
+                domain.atoms,
+                valence_angle=True,
+                prefix="RDef",
+                start=len(coordinates) + 1,
+                diagnostic=diagnostic,
+                **kwargs,
+            )
+        )
+    return coordinates
+
+
+def _ring_puckering_block(
+    domains: tuple[_RingCoordinateDomain, ...],
+    *,
+    coords: np.ndarray,
+    atomic_numbers: tuple[int, ...],
+    requested_model: str,
+) -> list[GICForgePythonCoordinate]:
+    coordinates: list[GICForgePythonCoordinate] = []
+    for domain in domains:
+        diagnostic = (
+            f"LOCAL_SALC KIND=RING_TORSION DOMAIN=RING:{domain.index} "
+            f"GROUP={domain.local_group} CONFIDENCE={domain.confidence} "
+            f"OPERATIONS={domain.operation_count}{domain.diagnostic_suffix}"
+        )
+        effective_model = SONIC_CONSTRUCTION_POLICY.effective_ring_model(
+            requested_model,
+            aromatic=domain.aromatic,
+        )
+        aromatic_default = domain.aromatic and effective_model != requested_model
+        if effective_model == "charm":
+            ring_coordinates = _cyclic_charm_coordinates(
+                domain.atoms,
+                coords=coords,
+                prefix="RPck",
+                start=len(coordinates) + 1,
+                diagnostic=diagnostic.replace("KIND=RING_TORSION", "KIND=RING_CHARM"),
+            )
+        elif effective_model == "local_out_of_plane":
+            ring_kind = (
+                "KIND=AROMATIC_BLOCK_OUT_OF_PLANE"
+                if aromatic_default
+                else "KIND=RING_OUT_OF_PLANE"
+            )
+            model_suffix = f" {AROMATIC_LOCAL_MODEL_DIAGNOSTIC}" if aromatic_default else ""
+            ring_coordinates = _cyclic_out_of_plane_coordinates(
+                domain.atoms,
+                coords=coords,
+                prefix="RPck",
+                start=len(coordinates) + 1,
+                diagnostic=diagnostic.replace("KIND=RING_TORSION", ring_kind) + model_suffix,
+            )
+        elif effective_model == "triangular_flap":
+            ring_coordinates = _cyclic_triangular_flap_coordinates(
+                domain.atoms,
+                coords=coords,
+                prefix="RPck",
+                start=len(coordinates) + 1,
+                diagnostic=diagnostic.replace(
+                    "KIND=RING_TORSION",
+                    "KIND=RING_TRIANGULAR_FLAP",
+                ),
+            )
+        else:
+            ring_coordinates = _legacy_ring_puckering_coordinates(
+                domain,
+                coords=coords,
+                atomic_numbers=atomic_numbers,
+                start=len(coordinates) + 1,
+                diagnostic=diagnostic,
+            )
+        if not ring_coordinates and len(domain.atoms) > 3:
+            raise ValueError(
+                f"cannot construct {requested_model} coordinates for ring "
+                f"{domain.index} with atoms {tuple(atom + 1 for atom in domain.atoms)}"
+            )
+        coordinates.extend(ring_coordinates)
+    return coordinates
+
+
+def _legacy_ring_puckering_coordinates(
+    domain: _RingCoordinateDomain,
+    *,
+    coords: np.ndarray,
+    atomic_numbers: tuple[int, ...],
+    start: int,
+    diagnostic: str,
+) -> list[GICForgePythonCoordinate]:
+    coordinates = _cyclic_coordinates(
+        domain.atoms,
+        valence_angle=False,
+        prefix="RPck",
+        start=start,
+        coords=coords,
+        atomic_numbers=atomic_numbers,
+        diagnostic=(
+            f"{diagnostic} MODEL=ENDOCYCLIC_DIHEDRAL STATUS=LEGACY_DEPRECATED"
+        ),
+    )
+    expected_rank = len(domain.atoms) - 3
+    legacy_rank = _coordinate_b_rank(tuple(coordinates), coords)
+    if legacy_rank == expected_rank:
+        return coordinates
+    warnings.warn(
+        "legacy endocyclic-dihedral ring coordinates are rank deficient "
+        f"for ring {domain.index} ({legacy_rank}/{expected_rank}); selecting "
+        "the triangular-flap chart for this new construction",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+    source = (
+        f"{diagnostic.replace('KIND=RING_TORSION', 'KIND=RING_TRIANGULAR_FLAP')} "
+        "REQUESTED_MODEL=ENDOCYCLIC_DIHEDRAL "
+        f"REQUESTED_RANK={legacy_rank}/{expected_rank} "
+        "STATUS=LEGACY_RANK_DEFICIENT FALLBACK=TRIANGULAR_FLAP "
+        "RESTART_POLICY=UNCHANGED"
+    )
+    event = make_fallback_event(
+        stage="SMITH_RING_CHART",
+        algorithm_id="TRIANGULAR_FLAP",
+        trigger="LEGACY_ENDOCYCLIC_DIHEDRAL_RANK_DEFICIENT",
+        domain=f"RING:{domain.index}",
+        macrofamily="RING_PUCKER_COMPONENT",
+        rank_before=legacy_rank,
+        rank_after=expected_rank,
+        source=source,
+    )
+    return [
+        replace(coordinate, fallback_events=(event,))
+        for coordinate in _cyclic_triangular_flap_coordinates(
+            domain.atoms,
+            coords=coords,
+            prefix="RPck",
+            start=start,
+            diagnostic=source,
+        )
+    ]
+
+
 def _fortran_like_primitive_blocks(
     graph,
     coords: np.ndarray,
@@ -428,16 +933,17 @@ def _fortran_like_primitive_blocks(
     onedih: bool,
     svd_local: bool,
     local_salc: bool,
+    xy3_torsions: bool,
+    xy2_torsions: bool,
     separate_exocyclic_torsions: bool,
     max_linear_angle_pairs_per_center: int,
     linear_threshold: float,
     local_salc_settings: LocalSALCSettings,
+    ring_puckering_model: str,
 ):
     bond_primitives: list[GICForgePythonCoordinate] = []
     bends: list[GICForgePythonCoordinate] = []
     linears: list[GICForgePythonCoordinate] = []
-    torsions: list[GICForgePythonCoordinate] = []
-    oops: list[GICForgePythonCoordinate] = []
     neighbors = [sorted(graph.adjacency[index]) for index in range(graph.natoms)]
     effective_atomic_numbers = _effective_atomic_numbers(graph, coords, atomic_numbers, neighbors)
     selected_rings = _minimum_cycle_basis(
@@ -454,6 +960,7 @@ def _fortran_like_primitive_blocks(
         for i in range(len(ring))
     }
     bridge_bonds = _bridge_bonds(selected_rings)
+    xy2_domains: dict[int, tuple[int, tuple[int, int]]] = {}
 
     for center in range(graph.natoms):
         neigh = neighbors[center]
@@ -467,6 +974,95 @@ def _fortran_like_primitive_blocks(
                     Primitive("bond", (center, first)),
                 )
             )
+        # The analytic C3v angular SALCs and the optional collective XY3
+        # torsion are independent choices.  Always use the existing WXY3
+        # angular chart when ORACLE recognizes Z-X(Y)3; ``xy3_torsions`` only
+        # controls the torsion family below.  Coupling these switches forced
+        # default builds through a geometry-fitted tetrahedral angle basis,
+        # which need not remain independent as the local geometry evolves.
+        xy3_domain = _xy3_angle_domain(
+            center,
+            neigh,
+            atomic_numbers=atomic_numbers,
+            effective_atomic_numbers=effective_atomic_numbers,
+            neighbors=neighbors,
+            atom_ring=atom_ring,
+        )
+        if xy3_domain is not None:
+            z_atom, y_atoms = xy3_domain
+            frozen = {
+                atom: atom_ring[atom] != 0 and atom_ring[center] != 0 for atom in (z_atom, *y_atoms)
+            }
+            bends.extend(
+                _wxy3_coordinates(
+                    center,
+                    z_atom,
+                    y_atoms[0],
+                    y_atoms[1],
+                    y_atoms[2],
+                    frozen=frozen,
+                    start=len(bends) + 1,
+                )
+            )
+            continue
+        xy2_domain = (
+            _xy2_angle_domain(
+                center,
+                neigh,
+                atomic_numbers=atomic_numbers,
+                effective_atomic_numbers=effective_atomic_numbers,
+                neighbors=neighbors,
+                atom_ring=atom_ring,
+            )
+            if xy2_torsions
+            else None
+        )
+        if xy2_domain is not None:
+            z_atom, y_atoms = xy2_domain
+            xy2_domains[center] = xy2_domain
+            bends.extend(
+                _xy2_angle_coordinates(
+                    center,
+                    z_atom,
+                    y_atoms[0],
+                    y_atoms[1],
+                    start=len(bends) + 1,
+                )
+            )
+            continue
+        template_match = (
+            _local_coordination_match(
+                center,
+                neigh,
+                coords=coords,
+                max_rms_cosine_error=local_salc_settings.template_rms_threshold,
+                min_score_margin=local_salc_settings.template_min_margin,
+            )
+            if len(neigh) >= 4
+            else None
+        )
+        use_template_catalog = (
+            template_match is not None
+            and template_match.template is not None
+            and (
+                atom_ring[center] == 0
+                or len(neigh) >= 5
+                or template_match.template.name == "SQUARE_PLANAR"
+            )
+        )
+        if use_template_catalog:
+            template_coordinates = _template_angle_salc_coordinates(
+                center,
+                neigh,
+                template=template_match.template,
+                match=template_match,
+                coords=coords,
+                settings=local_salc_settings,
+                start=len(bends) + 1,
+            )
+            if template_coordinates is not None:
+                bends.extend(template_coordinates)
+                continue
         if local_salc and len(neigh) > 1:
             exo_primitives, exo_linears = _exocyclic_angle_primitives(
                 center,
@@ -483,19 +1079,47 @@ def _fortran_like_primitive_blocks(
                 coords=coords,
                 settings=local_salc_settings,
             ):
+                use_geometry_svd_fallback = len(neigh) >= 5 or (
+                    len(neigh) == 4 and atom_ring[center] == 0
+                )
+                fallback_source = (
+                    f"{diagnostic} CANONICAL_CATALOG=NO FALLBACK=ACTUAL_GEOMETRY_SVD"
+                )
+                builder = (
+                    _svd_local_coordinates if use_geometry_svd_fallback else _local_salc_coordinates
+                )
                 bends.extend(
-                    _local_salc_coordinates(
+                    builder(
                         list(primitives),
                         prefix="XAng",
                         start=len(bends) + 1,
                         kind_type_index=0,
-                        diagnostic=diagnostic,
+                        diagnostic=(
+                            fallback_source
+                            if use_geometry_svd_fallback
+                            else diagnostic
+                        ),
+                        **(
+                            {
+                                "coords": coords,
+                                "fallback_events": (
+                                    make_fallback_event(
+                                        stage="SMITH_LOCAL_SALC",
+                                        algorithm_id="ACTUAL_GEOMETRY_SVD",
+                                        trigger="NO_CANONICAL_HIGH_COORDINATION_CATALOG",
+                                        domain=f"CENTER:{center + 1}",
+                                        macrofamily="BEND",
+                                        source=fallback_source,
+                                    ),
+                                ),
+                            }
+                            if use_geometry_svd_fallback
+                            else {}
+                        ),
                     )
                 )
             exo_linears = (
-                exo_linears[: max(0, max_linear_angle_pairs_per_center)]
-                if len(neigh) == 2
-                else []
+                exo_linears[: max(0, max_linear_angle_pairs_per_center)] if len(neigh) == 2 else []
             )
             for primitive in exo_linears:
                 linears.append(_primitive_coordinate("LAng", len(linears) + 1, primitive))
@@ -503,7 +1127,12 @@ def _fortran_like_primitive_blocks(
                     _primitive_coordinate(
                         "LAng",
                         len(linears) + 1,
-                        Primitive("linear_bend", primitive.atoms, mode=-2),
+                        Primitive(
+                            "linear_bend",
+                            primitive.atoms,
+                            mode=-2,
+                            ref=primitive.ref,
+                        ),
                     )
                 )
         elif svd_local and len(neigh) > 1:
@@ -533,7 +1162,12 @@ def _fortran_like_primitive_blocks(
                     _primitive_coordinate(
                         "LAng",
                         len(linears) + 1,
-                        Primitive("linear_bend", primitive.atoms, mode=-2),
+                        Primitive(
+                            "linear_bend",
+                            primitive.atoms,
+                            mode=-2,
+                            ref=primitive.ref,
+                        ),
                     )
                 )
         elif len(neigh) == 3:
@@ -563,16 +1197,18 @@ def _fortran_like_primitive_blocks(
                 )
                 continue
             if len(neigh) == 4 and not _has_linear_pair(center, neigh, coords, linear_threshold):
-                bends.extend(
-                    _four_atom_angle_coordinates(
-                        center,
-                        neigh,
-                        effective_atomic_numbers=effective_atomic_numbers,
-                        atom_ring=atom_ring,
-                        coords=coords,
-                        start=len(bends) + 1,
-                    )
+                four_atom_coordinates = _four_atom_angle_coordinates(
+                    center,
+                    neigh,
+                    atomic_numbers=atomic_numbers,
+                    effective_atomic_numbers=effective_atomic_numbers,
+                    neighbors=neighbors,
+                    atom_ring=atom_ring,
+                    coords=coords,
+                    force_xy3_salc=False,
+                    start=len(bends) + 1,
                 )
+                bends.extend(four_atom_coordinates)
                 continue
             if len(neigh) > 4:
                 high_bends, high_linears = _high_coord_angle_coordinates(
@@ -599,171 +1235,102 @@ def _fortran_like_primitive_blocks(
                             )
                         )
                     else:
+                        if len(neigh) >= 3 or _has_redundant_linear_pairs(center, neigh, coords):
+                            continue
                         linears.append(
                             _primitive_coordinate(
                                 "LAng",
                                 len(linears) + 1,
-                                Primitive("linear_bend", (left, center, right), mode=-1),
+                                _linear_bend_primitive((left, center, right), coords, mode=-1),
                             )
                         )
                         linears.append(
                             _primitive_coordinate(
                                 "LAng",
                                 len(linears) + 1,
-                                Primitive("linear_bend", (left, center, right), mode=-2),
+                                _linear_bend_primitive((left, center, right), coords, mode=-2),
                             )
                         )
 
-    ring_bends: list[GICForgePythonCoordinate] = []
-    ring_torsions: list[GICForgePythonCoordinate] = []
-    for ring_index, ring in enumerate(selected_rings, start=1):
-        ring_group, ring_confidence, ring_operations = _ring_local_pseudogroup(
-            ring,
-            effective_atomic_numbers=effective_atomic_numbers,
-            coords=coords,
-            settings=local_salc_settings,
-        )
-        ring_diagnostic = (
-            f"LOCAL_SALC KIND=RING_ANGLE DOMAIN=RING:{ring_index} "
-            f"GROUP={ring_group} CONFIDENCE={ring_confidence} "
-            f"OPERATIONS={ring_operations}"
-        )
-        if svd_local:
-            ring_bends.extend(
-                _cyclic_svd_coordinates(
-                    ring,
-                    valence_angle=True,
-                    coords=coords,
-                    prefix="RDef",
-                    start=len(ring_bends) + 1,
-                    diagnostic=ring_diagnostic,
-                )
-            )
-        else:
-            ring_bends.extend(
-                _cyclic_coordinates(
-                    ring,
-                    valence_angle=True,
-                    prefix="RDef",
-                    start=len(ring_bends) + 1,
-                    diagnostic=ring_diagnostic,
-                )
-            )
+    ring_domains = _ring_coordinate_domains(
+        selected_rings,
+        aromatic_atoms=aromatic_atoms,
+        effective_atomic_numbers=effective_atomic_numbers,
+        coords=coords,
+        settings=local_salc_settings,
+    )
+    ring_bends = _ring_bend_block(
+        ring_domains,
+        coords=coords,
+        svd_local=svd_local,
+    )
 
     # Ring deformations are the independent coordinates that enforce cyclic
     # closure.  Keep them ahead of exocyclic angle complements during the
     # rank-revealing prune; otherwise a substituted C1 ring can lose every
     # explicit ring-deformation coordinate merely because its local primitive
     # angles were enumerated first.
-    bends = ring_bends + bends
-
-    for bond in bond_primitives:
-        _coef, primitive = bond.terms[0]
-        center, right = primitive.atoms
-        if tuple(sorted((center, right))) in bridge_bonds:
-            butterfly = _butterfly_coordinate(
-                center,
-                right,
-                neighbors=neighbors,
-                atom_ring=atom_ring,
-                selected_rings=selected_rings,
-                coords=coords,
-                linear_threshold=linear_threshold,
-                index=len(torsions) + 1,
-            )
-            if butterfly is not None:
-                torsions.append(butterfly)
-            continue
-        if tuple(sorted((center, right))) in ring_bonds:
-            continue
-        if len(neighbors[center]) == 1 or len(neighbors[right]) == 1:
-            continue
-        torsion_factory = (
-            _single_dihedral_torsion_coordinate
-            if separate_exocyclic_torsions
-            else (
-                _local_salc_torsion_coordinate
-                if local_salc
-                else (_onedih_torsion_coordinate if onedih else _torsion_coordinate)
-            )
-        )
-        torsion = torsion_factory(
-            center,
-            right,
-            neighbors=neighbors,
-            atomic_numbers=atomic_numbers,
-            effective_atomic_numbers=effective_atomic_numbers,
-            atom_ring=atom_ring,
-            ring_counts=ring_counts,
-            coords=coords,
-            linear_threshold=linear_threshold,
-            index=len(torsions) + 1,
-        )
-        if torsion is not None:
-            torsions.append(torsion)
-
-    for ring_index, ring in enumerate(selected_rings, start=1):
-        ring_group, ring_confidence, ring_operations = _ring_local_pseudogroup(
-            ring,
-            effective_atomic_numbers=effective_atomic_numbers,
-            coords=coords,
-            settings=local_salc_settings,
-        )
-        ring_diagnostic = (
-            f"LOCAL_SALC KIND=RING_TORSION DOMAIN=RING:{ring_index} "
-            f"GROUP={ring_group} CONFIDENCE={ring_confidence} "
-            f"OPERATIONS={ring_operations}"
-        )
-        ring_coordinates = _cyclic_out_of_plane_coordinates(
-            ring,
-            coords=coords,
-            prefix="RPck",
-            start=len(ring_torsions) + 1,
-            diagnostic=ring_diagnostic.replace(
-                "KIND=RING_TORSION",
-                "KIND=RING_OUT_OF_PLANE",
+    xy3_bends = [coordinate for coordinate in bends if "KIND=XY3_ANGLE" in coordinate.diagnostic]
+    xy2_bends = [coordinate for coordinate in bends if "KIND=XY2_ANGLE" in coordinate.diagnostic]
+    xy2_out_of_plane = [
+        GICForgePythonCoordinate(
+            name=f"X2OP{index:04d}",
+            block="X2OP",
+            type_index=2,
+            # Gaussian U(center,plane1,plane2,out): the equivalent Y pair
+            # defines the plane and the distinct Z ligand is displaced.  The
+            # former (center,Z,Y1,Y2) ordering selected one Y as ``out`` and
+            # its analytic Wilson row was not covariant away from planarity.
+            terms=((1.0, Primitive("out_of_plane", (center, *y_atoms, z_atom))),),
+            diagnostic=(
+                f"LOCAL_SALC KIND=XY2_OUT_OF_PLANE DOMAIN=CENTER:{center + 1} "
+                f"Z={z_atom + 1} Y={y_atoms[0] + 1},{y_atoms[1] + 1} "
+                "OWNERSHIP=XY2 NORMALIZATION=ANALYTIC"
             ),
         )
-        if not ring_coordinates and svd_local:
-            ring_coordinates = _cyclic_svd_coordinates(
-                ring,
-                valence_angle=False,
-                coords=coords,
-                atomic_numbers=atomic_numbers,
-                prefix="RPck",
-                start=len(ring_torsions) + 1,
-                diagnostic=ring_diagnostic,
-            )
-        elif not ring_coordinates:
-            ring_coordinates = _cyclic_coordinates(
-                ring,
-                valence_angle=False,
-                prefix="RPck",
-                start=len(ring_torsions) + 1,
-                coords=coords,
-                atomic_numbers=atomic_numbers,
-                diagnostic=ring_diagnostic,
-            )
-        ring_torsions.extend(ring_coordinates)
+        for index, (center, (z_atom, y_atoms)) in enumerate(sorted(xy2_domains.items()), start=1)
+    ]
+    ordinary_bends = [
+        coordinate
+        for coordinate in bends
+        if "KIND=XY3_ANGLE" not in coordinate.diagnostic
+        and "KIND=XY2_ANGLE" not in coordinate.diagnostic
+    ]
+    # Domain ownership order: stretches are emitted first by the returned
+    # block order; protected ring and XY3 coordinates precede all remaining
+    # ordinary bends so the rank reduction never decides ownership by chance.
+    special_bends = ring_bends + xy3_bends + xy2_bends + xy2_out_of_plane
 
-    # Ring puckering is a defining special-coordinate block.  It must be
-    # considered before any exocyclic torsion so the rank reduction can never
-    # replace a ring mode by an ordinary external angle or dihedral.
-    torsions = ring_torsions + torsions
-
-    oop_prefix = "ImpD" if impdih else "OuPl"
-    for center in range(graph.natoms):
-        neigh = neighbors[center]
-        if len(neigh) != 3:
-            continue
-        first, second, third = neigh
-        if all(atom_ring[atom] != 0 for atom in (center, first, second, third)):
-            continue
-        if impdih:
-            primitive = Primitive("dihedral", (first, center, third, second))
-        else:
-            primitive = Primitive("out_of_plane", (center, first, second, third))
-        oops.append(_primitive_coordinate(oop_prefix, len(oops) + 1, primitive))
+    special_torsions, ordinary_torsions = _fortran_like_torsion_blocks(
+        bond_primitives,
+        ring_domains=ring_domains,
+        bridge_bonds=bridge_bonds,
+        ring_bonds=ring_bonds,
+        selected_rings=selected_rings,
+        neighbors=neighbors,
+        atomic_numbers=atomic_numbers,
+        effective_atomic_numbers=effective_atomic_numbers,
+        atom_ring=atom_ring,
+        ring_counts=ring_counts,
+        coords=coords,
+        linear_threshold=linear_threshold,
+        ring_puckering_model=ring_puckering_model,
+        xy3_torsions=xy3_torsions,
+        xy2_torsions=xy2_torsions,
+        separate_exocyclic_torsions=separate_exocyclic_torsions,
+        local_salc=local_salc,
+        onedih=onedih,
+    )
+    oops = _fortran_like_out_of_plane_block(
+        graph.natoms,
+        neighbors=neighbors,
+        xy2_domains=xy2_domains,
+        atom_ring=atom_ring,
+        atomic_numbers=atomic_numbers,
+        effective_atomic_numbers=effective_atomic_numbers,
+        coords=coords,
+        impdih=impdih,
+    )
 
     bonds = _bond_length_coordinates(
         bond_primitives,
@@ -774,7 +1341,179 @@ def _fortran_like_primitive_blocks(
         local_salc=local_salc,
         settings=local_salc_settings,
     )
-    return bonds, bends, linears, torsions, oops
+    assembled = (
+        bonds,
+        special_bends,
+        special_torsions,
+        linears,
+        oops,
+        ordinary_bends,
+        ordinary_torsions,
+    )
+    ordinary_torsions.extend(
+        _linear_case_completeness_torsions(
+            tuple(coordinate for block in assembled for coordinate in block),
+            graph,
+            coords,
+            neighbors=neighbors,
+            linear_threshold=linear_threshold,
+            start=len(ordinary_torsions) + 1,
+        )
+    )
+    # All protected/special domains precede the residual standard chart.
+    return (
+        bonds,
+        special_bends,
+        special_torsions,
+        linears,
+        oops,
+        ordinary_bends,
+        ordinary_torsions,
+    )
+
+
+def _fortran_like_torsion_blocks(
+    bond_primitives,
+    *,
+    ring_domains,
+    bridge_bonds,
+    ring_bonds,
+    selected_rings,
+    neighbors,
+    atomic_numbers,
+    effective_atomic_numbers,
+    atom_ring,
+    ring_counts,
+    coords,
+    linear_threshold,
+    ring_puckering_model,
+    xy3_torsions,
+    xy2_torsions,
+    separate_exocyclic_torsions,
+    local_salc,
+    onedih,
+):
+    """Build ring-protected and ordinary torsion blocks."""
+
+    collective_xy3 = []
+    collective_xy2 = []
+    ordinary = []
+    for bond in bond_primitives:
+        _coefficient, primitive = bond.terms[0]
+        center, right = primitive.atoms
+        index = len(collective_xy3) + len(collective_xy2) + len(ordinary) + 1
+        if tuple(sorted((center, right))) in bridge_bonds:
+            butterfly = _butterfly_coordinate(
+                center,
+                right,
+                neighbors=neighbors,
+                atom_ring=atom_ring,
+                selected_rings=selected_rings,
+                coords=coords,
+                linear_threshold=linear_threshold,
+                index=index,
+            )
+            if butterfly is not None:
+                ordinary.append(butterfly)
+            continue
+        if tuple(sorted((center, right))) in ring_bonds:
+            continue
+        if len(neighbors[center]) == 1 or len(neighbors[right]) == 1:
+            continue
+        common = {
+            "neighbors": neighbors,
+            "atomic_numbers": atomic_numbers,
+            "effective_atomic_numbers": effective_atomic_numbers,
+            "atom_ring": atom_ring,
+            "ring_counts": ring_counts,
+            "coords": coords,
+            "linear_threshold": linear_threshold,
+            "index": index,
+        }
+        if xy3_torsions and not separate_exocyclic_torsions:
+            coordinate = _xy3_collective_torsion_coordinate(center, right, **common)
+            if coordinate is not None:
+                collective_xy3.append(coordinate)
+                continue
+        if xy2_torsions and not separate_exocyclic_torsions:
+            coordinate = _xy2_collective_torsion_coordinate(center, right, **common)
+            if coordinate is not None:
+                collective_xy2.append(coordinate)
+                continue
+        factory = (
+            _single_dihedral_torsion_coordinate
+            if separate_exocyclic_torsions
+            else (
+                _local_salc_torsion_coordinate
+                if local_salc
+                else (_onedih_torsion_coordinate if onedih else _torsion_coordinate)
+            )
+        )
+        coordinate = factory(center, right, **common)
+        if coordinate is not None:
+            ordinary.append(coordinate)
+    ring_torsions = _ring_puckering_block(
+        ring_domains,
+        coords=coords,
+        atomic_numbers=atomic_numbers,
+        requested_model=ring_puckering_model,
+    )
+    return ring_torsions + collective_xy3 + collective_xy2, ordinary
+
+
+def _fortran_like_out_of_plane_block(
+    natoms,
+    *,
+    neighbors,
+    xy2_domains,
+    atom_ring,
+    atomic_numbers,
+    effective_atomic_numbers,
+    coords,
+    impdih,
+):
+    """Build the tricoordinate out-of-plane block."""
+
+    output = []
+    prefix = "ImpD" if impdih else "OuPl"
+    for center in range(natoms):
+        neigh = neighbors[center]
+        if len(neigh) != 3 or center in xy2_domains:
+            continue
+        first, second, third = neigh
+        if all(atom_ring[atom] != 0 for atom in (center, first, second, third)):
+            continue
+        if impdih:
+            primitive = Primitive("dihedral", (first, center, third, second))
+            output.append(_primitive_coordinate(prefix, len(output) + 1, primitive))
+            continue
+        atom_orders = _tricoordinate_out_of_plane_atom_orders(
+            center,
+            (first, second, third),
+            atomic_numbers=atomic_numbers,
+            effective_atomic_numbers=effective_atomic_numbers,
+            neighbors=neighbors,
+            atom_ring=atom_ring,
+            coords=coords,
+        )
+        primitives = tuple(Primitive("out_of_plane", atoms) for atoms in atom_orders)
+        if len(primitives) == 1:
+            output.append(_primitive_coordinate(prefix, len(output) + 1, primitives[0]))
+            continue
+        coefficient = 1.0 / np.sqrt(float(len(primitives)))
+        output.append(
+            GICForgePythonCoordinate(
+                name=f"{prefix}{len(output) + 1:04d}",
+                block=prefix,
+                type_index=2,
+                terms=tuple((coefficient, primitive) for primitive in primitives),
+                diagnostic=(
+                    f"LOCAL_SALC KIND=XY3_OUT_OF_PLANE DOMAIN=CENTER:{center + 1} "
+                    "MODEL=C3V_LIKE_NORMALIZED_CYCLIC_MEAN NORMALIZATION=ANALYTIC"
+                ),
+            )
+        )
+    return output
 
 
 def _primitive_fallback_blocks(
@@ -820,18 +1559,34 @@ def _primitive_fallback_blocks(
                 if angle(first_angle, center, second_angle, coords) < linear_threshold:
                     bends.append(_primitive_coordinate("Bend", len(bends) + 1, primitive))
                 else:
+                    # The fallback pool must obey the same recognized-template
+                    # policy as the primary construction.  Otherwise rank
+                    # completion can reintroduce redundant trans bends that
+                    # were intentionally suppressed for linear-pair templates.
+                    if len(neigh) >= 3 or _has_redundant_linear_pairs(center, neigh, coords):
+                        continue
                     linears.append(
                         _primitive_coordinate(
                             "LAng",
                             len(linears) + 1,
-                            Primitive("linear_bend", primitive.atoms, mode=-1),
+                            Primitive(
+                                "linear_bend",
+                                primitive.atoms,
+                                mode=-1,
+                                ref=primitive.ref,
+                            ),
                         )
                     )
                     linears.append(
                         _primitive_coordinate(
                             "LAng",
                             len(linears) + 1,
-                            Primitive("linear_bend", primitive.atoms, mode=-2),
+                            Primitive(
+                                "linear_bend",
+                                primitive.atoms,
+                                mode=-2,
+                                ref=primitive.ref,
+                            ),
                         )
                     )
 
@@ -877,7 +1632,98 @@ def _primitive_fallback_blocks(
         effective_atomic_numbers=effective_atomic_numbers,
         coords=coords,
     )
+    assembled = (bonds, bends, linears, torsions, oops)
+    torsions.extend(
+        _linear_case_completeness_torsions(
+            tuple(coordinate for block in assembled for coordinate in block),
+            graph,
+            coords,
+            neighbors=neighbors,
+            linear_threshold=linear_threshold,
+            start=len(torsions) + 1,
+        )
+    )
     return bonds, bends, linears, torsions, oops
+
+
+def _linear_case_completeness_torsions(
+    coordinates: tuple[GICForgePythonCoordinate, ...],
+    graph,
+    coords: np.ndarray,
+    *,
+    neighbors: list[list[int]],
+    linear_threshold: float,
+    start: int,
+) -> list[GICForgePythonCoordinate]:
+    """Add only regular collapsed-center torsions needed to close the rank.
+
+    An ordinary dihedral containing a linear triple has a singular derivative.
+    Collapsing that triple to its two endpoints gives the regular equivalent
+    used by Gaussian DefRed.  Candidate acceptance is global and rank-revealing,
+    so this rule applies to every linear sequence without molecule-specific
+    branches and leaves already complete coordinate charts unchanged.
+    """
+
+    target_rank = _target_rank(coords, graph)
+    current = list(coordinates)
+    current_rank = _coordinate_b_rank(tuple(current), coords)
+    if current_rank >= target_rank:
+        return []
+
+    seen = {
+        min(primitive.atoms, tuple(reversed(primitive.atoms)))
+        for coordinate in current
+        for _coefficient, primitive in coordinate.terms
+        if primitive.kind == "dihedral" and len(primitive.atoms) == 4
+    }
+    additions: list[GICForgePythonCoordinate] = []
+    for linear_center in range(graph.natoms):
+        center_neighbors = neighbors[linear_center]
+        for index, left_endpoint in enumerate(center_neighbors[:-1]):
+            for right_endpoint in center_neighbors[index + 1 :]:
+                if angle(left_endpoint, linear_center, right_endpoint, coords) < linear_threshold:
+                    continue
+                for left in neighbors[left_endpoint]:
+                    if left == linear_center:
+                        continue
+                    for right in neighbors[right_endpoint]:
+                        if right == linear_center:
+                            continue
+                        atoms = (left, left_endpoint, right_endpoint, right)
+                        if len(set(atoms)) != 4:
+                            continue
+                        canonical = min(atoms, tuple(reversed(atoms)))
+                        if canonical in seen:
+                            continue
+                        seen.add(canonical)
+                        candidate = _primitive_coordinate(
+                            "Dihe",
+                            start + len(additions),
+                            Primitive("dihedral", canonical),
+                        )
+                        trial = tuple((*current, candidate))
+                        trial_rank = _coordinate_b_rank(trial, coords)
+                        if trial_rank <= current_rank:
+                            continue
+                        additions.append(
+                            GICForgePythonCoordinate(
+                                name=candidate.name,
+                                block=candidate.block,
+                                terms=candidate.terms,
+                                type_index=candidate.type_index,
+                                diagnostic=(
+                                    "SPECIAL_LINEAR_CASE=YES "
+                                    f"COLLAPSED_CENTER={linear_center + 1} "
+                                    f"ENDPOINTS={left_endpoint + 1}-{right_endpoint + 1} "
+                                    "SELECTION=GLOBAL_RANK_REVEALING"
+                                ),
+                            )
+                        )
+                        current.append(additions[-1])
+                        current_rank = trial_rank
+                        if current_rank >= target_rank:
+                            return additions
+    return additions
 
 
 def _has_linear_pair(
@@ -915,51 +1761,22 @@ def _minimum_cycle_basis(
 ) -> list[tuple[int, ...]]:
     if ringset is None:
         return []
-    edges = sorted(tuple(sorted(edge)) for edge in graph.bonds)
-    edge_index = {edge: index for index, edge in enumerate(edges)}
-    target = len(edges) - graph.natoms + len(_connected_components(graph))
-    if target <= 0:
-        return []
-    basis: list[set[int]] = []
-    pivots: list[int] = []
-    selected: list[tuple[int, ...]] = []
-
-    def reduce_vector(vector: set[int]) -> set[int]:
-        reduced = set(vector)
-        for pivot, row in zip(pivots, basis):
-            if pivot in reduced:
-                reduced ^= row
-        return reduced
-
-    def add_vector(vector: set[int]) -> bool:
-        reduced = reduce_vector(vector)
-        if not reduced:
-            return False
-        pivot = min(reduced)
-        index = 0
-        while index < len(pivots) and pivots[index] < pivot:
-            index += 1
-        pivots.insert(index, pivot)
-        basis.insert(index, reduced)
-        return True
-
-    for ring in sorted(ringset.rings, key=lambda item: (len(item.atoms), item.index)):
-        atoms = tuple(int(atom) for atom in ring.atoms)
-        vector = {
-            edge_index[tuple(sorted((atoms[index], atoms[(index + 1) % len(atoms)])))]
-            for index in range(len(atoms))
-        }
-        if add_vector(vector):
-            selected.append(
-                _orient_ring_for_gicforge(
-                    atoms,
-                    effective_atomic_numbers=effective_atomic_numbers,
-                    neighbors=neighbors,
-                )
-            )
-        if len(selected) >= target:
-            break
-    return selected
+    diagnostics = getattr(ringset, "cycle_basis_diagnostics", None)
+    if diagnostics is not None and not diagnostics.complete:
+        raise ValueError(
+            "ORACLE ring contract is incomplete; remove the explicit ring-size truncation"
+        )
+    # ORACLE has already selected the independent minimum cycle basis. SMITH
+    # changes only the traversal origin/direction used to define coordinate
+    # phases; it must not perform a second cycle-space reduction.
+    return [
+        _orient_ring_for_gicforge(
+            tuple(int(atom) for atom in ring.atoms),
+            effective_atomic_numbers=effective_atomic_numbers,
+            neighbors=neighbors,
+        )
+        for ring in sorted(ringset.rings, key=lambda item: (len(item.atoms), item.index))
+    ]
 
 
 def _orient_ring_for_gicforge(
@@ -1097,13 +1914,6 @@ def _effective_atomic_numbers(
     )
 
 
-def _all_atoms_in_three_selected_rings(ring: tuple[int, ...], rings: list[tuple[int, ...]]) -> bool:
-    counts = {atom: 0 for atom in ring}
-    for candidate in rings:
-        for atom in ring:
-            if atom in candidate:
-                counts[atom] += 1
-    return all(count >= 3 for count in counts.values())
 
 
 def _bridge_bonds(rings: list[tuple[int, ...]]) -> set[tuple[int, int]]:
@@ -1173,6 +1983,7 @@ def _exocyclic_angle_primitives(
 ) -> tuple[list[Primitive], list[Primitive]]:
     angles: list[Primitive] = []
     linears: list[Primitive] = []
+    suppress_redundant_trans = len(neigh) >= 3 or _has_redundant_linear_pairs(center, neigh, coords)
     for index, first in enumerate(neigh[:-1]):
         for second in neigh[index + 1 :]:
             left, right = sorted((first, second))
@@ -1182,8 +1993,20 @@ def _exocyclic_angle_primitives(
             if angle(left, center, right, coords) < linear_threshold:
                 angles.append(primitive)
             else:
-                linears.append(Primitive("linear_bend", (left, center, right), mode=-1))
+                if suppress_redundant_trans:
+                    continue
+                linears.append(_linear_bend_primitive((left, center, right), coords, mode=-1))
     return angles, linears
+
+
+def _has_redundant_linear_pairs(center: int, neigh: list[int], coords: np.ndarray) -> bool:
+    """Return whether a recognized template contains redundant trans pairs."""
+
+    match = _local_coordination_match(center, neigh, coords=coords)
+    if match.template is None:
+        return False
+    ideal_cosines = _sorted_pair_cosines(np.asarray(match.template.directions, dtype=float))
+    return bool(np.any(ideal_cosines <= -1.0 + 1.0e-8))
 
 
 def _is_endocyclic_angle(left: int, center: int, right: int, rings: list[tuple[int, ...]]) -> bool:
@@ -1284,51 +2107,14 @@ def _infer_local_pseudogroup(
     settings: LocalSALCSettings | None = None,
     match: LocalCoordinationMatch | None = None,
 ) -> tuple[str, str]:
-    local_settings = settings or LocalSALCSettings()
-    multiplicities = sorted((len(group) for group in classes), reverse=True)
-    local_match = match or _local_coordination_match(
+    return infer_local_pseudogroup(
         center,
         neigh,
-        coords=coords,
-        max_rms_cosine_error=local_settings.template_rms_threshold,
-        min_score_margin=local_settings.template_min_margin,
+        classes,
+        coordinates_angstrom=coords,
+        settings=settings,
+        match=match,
     )
-    template, score = local_match.template, local_match.score
-    if template is not None:
-        group_by_template = {
-            "TRIGONAL_BIPYRAMIDAL": "D3h",
-            "SQUARE_PYRAMIDAL": "C4v",
-            "OCTAHEDRAL": "Oh",
-            "TRIGONAL_PRISMATIC": "D3h",
-            "PENTAGONAL_BIPYRAMIDAL": "D5h",
-            "CAPPED_OCTAHEDRAL": "C3v",
-            "SQUARE_ANTIPRISMATIC": "D4d",
-            "DODECAHEDRAL_LIKE": "D2d",
-            "TRICAPPED_TRIGONAL_PRISMATIC": "D3h",
-            "CAPPED_SQUARE_ANTIPRISMATIC": "C4v",
-        }
-        base = group_by_template.get(template.name, "C1")
-        if len(classes) == 1:
-            return base, "HIGH" if score <= 0.06 else "MEDIUM"
-    if len(neigh) == 2 and multiplicities == [2]:
-        return "C2v", "HIGH"
-    if len(neigh) == 3 and multiplicities == [3]:
-        vectors = _local_ligand_unit_vectors(center, neigh, coords)
-        planarity = abs(float(np.linalg.det(vectors)))
-        return ("D3h" if planarity <= 0.08 else "C3v"), "HIGH"
-    if len(neigh) == 4 and multiplicities == [4]:
-        cosines = _sorted_pair_cosines(_local_ligand_unit_vectors(center, neigh, coords))
-        tetra_error = float(np.sqrt(np.mean((cosines + 1.0 / 3.0) ** 2)))
-        if tetra_error <= 0.12:
-            return "Td", "HIGH" if tetra_error <= 0.06 else "MEDIUM"
-        return "D4h", "MEDIUM"
-    if multiplicities and multiplicities[0] >= 3:
-        return "C3v", "MEDIUM"
-    if multiplicities[:2] == [2, 2]:
-        return "C2v", "MEDIUM"
-    if multiplicities and multiplicities[0] == 2:
-        return "Cs", "MEDIUM"
-    return "C1", "HIGH"
 
 
 def _ring_local_pseudogroup(
@@ -1338,36 +2124,51 @@ def _ring_local_pseudogroup(
     coords: np.ndarray,
     settings: LocalSALCSettings | None = None,
 ) -> tuple[str, str, int]:
-    local_settings = settings or LocalSALCSettings()
-    size = len(ring)
-    colors = tuple(
-        (
-            round(float(effective_atomic_numbers[atom]) / local_settings.zeff_tolerance),
-            round(
-                float(np.linalg.norm(coords[atom] - coords[ring[(index + 1) % size]]))
-                / local_settings.distance_tolerance_angstrom
-            ),
-        )
-        for index, atom in enumerate(ring)
+    return ring_local_pseudogroup(
+        ring,
+        effective_atomic_numbers=effective_atomic_numbers,
+        coordinates_angstrom=coords,
+        settings=settings,
     )
-    rotations = sum(
-        all(colors[index] == colors[(index + shift) % size] for index in range(size))
-        for shift in range(size)
-    )
-    reflections = sum(
-        all(colors[index] == colors[(shift - index) % size] for index in range(size))
-        for shift in range(size)
-    )
-    if rotations > 1 and reflections > 0:
-        group = f"D{rotations}"
-    elif rotations > 1:
-        group = f"C{rotations}"
-    elif reflections > 0:
-        group = "Cs"
-    else:
-        group = "C1"
-    confidence = "HIGH" if rotations + reflections > 1 else "MEDIUM"
-    return group, confidence, rotations + reflections
+
+
+def _aromatic_ring_block_labels(
+    rings: list[tuple[int, ...]],
+    aromatic_atoms: frozenset[int],
+) -> dict[int, int]:
+    """Label fused aromatic components without changing ring ownership.
+
+    Two aromatic rings belong to the same local block when they share an edge.
+    The labels are deterministic in ring order and are used only as semantic
+    diagnostics; each ring still supplies its own analytic local SALCs.
+    """
+
+    aromatic_indices = [
+        index
+        for index, ring in enumerate(rings)
+        if ring and all(atom in aromatic_atoms for atom in ring)
+    ]
+    memberships = {index: frozenset(rings[index]) for index in aromatic_indices}
+    adjacency = {index: set() for index in aromatic_indices}
+    for offset, left in enumerate(aromatic_indices):
+        for right in aromatic_indices[offset + 1 :]:
+            if len(memberships[left] & memberships[right]) >= 2:
+                adjacency[left].add(right)
+                adjacency[right].add(left)
+
+    labels: dict[int, int] = {}
+    for start in aromatic_indices:
+        if start in labels:
+            continue
+        block = len(set(labels.values())) + 1
+        pending = [start]
+        while pending:
+            index = pending.pop()
+            if index in labels:
+                continue
+            labels[index] = block
+            pending.extend(sorted(adjacency[index] - labels.keys(), reverse=True))
+    return labels
 
 
 def _torsion_coordinate(
@@ -1455,25 +2256,204 @@ def _onedih_torsion_coordinate(
             -pair[1],
         ),
     )
-    orbit = [
-        (left, far)
-        for left, far in candidates
-        if atom_ring[left] == atom_ring[selected_left]
-        and atomic_numbers[left] == atomic_numbers[selected_left]
-        and len(neighbors[left]) == len(neighbors[selected_left])
-        and atom_ring[far] == atom_ring[selected_far]
-        and atomic_numbers[far] == atomic_numbers[selected_far]
-        and len(neighbors[far]) == len(neighbors[selected_far])
-    ]
-    if not orbit:
-        orbit = [(selected_left, selected_far)]
-    coefficient = 1.0 / np.sqrt(float(len(orbit)))
     return GICForgePythonCoordinate(
         name=f"Tors{index:04d}",
         block="Tors",
         type_index=-1,
+        terms=((1.0, Primitive("dihedral", (selected_left, center, right, selected_far))),),
+        diagnostic=(
+            f"ONEDIH KIND=TORSION DOMAIN=BOND:{center + 1}-{right + 1} "
+            f"SELECTED={selected_left + 1}-{center + 1}-{right + 1}-{selected_far + 1} "
+            "POLICY=DETERMINISTIC_SINGLE_DIHEDRAL"
+        ),
+    )
+
+
+def _xy3_collective_torsion_coordinate(
+    center: int,
+    right: int,
+    *,
+    neighbors: list[list[int]],
+    atomic_numbers: tuple[int, ...],
+    effective_atomic_numbers: tuple[float, ...],
+    atom_ring: list[int],
+    ring_counts: list[int],
+    coords: np.ndarray,
+    linear_threshold: float,
+    index: int,
+) -> GICForgePythonCoordinate | None:
+    """Return the normalized collective rotor coordinate for an X(Y1,Y2,Y3)-Z domain.
+
+    Gaussian's XY3 model spans three combinations: two differential branch
+    coordinates and their common rotation.  SMITH already represents the two
+    branch-deformation directions in its angle block, so the nonredundant
+    SONIC chart retains only the common torsional direction.  Averaging over
+    every admissible W-Z anchor makes the coordinate independent of a single
+    skeleton atom; normalization leaves the Wilson-row scale well conditioned.
+    """
+
+    domains: list[tuple[bool, int, int, tuple[int, int, int], tuple[int, ...]]] = []
+    threshold = 5.0e-4
+    for x_atom, z_atom in ((center, right), (right, center)):
+        y_atoms = tuple(atom for atom in neighbors[x_atom] if atom != z_atom)
+        if len(y_atoms) != 3:
+            continue
+        if any(
+            angle(y_atom, x_atom, z_atom, coords) > linear_threshold or ring_counts[y_atom] >= 2
+            for y_atom in y_atoms
+        ):
+            continue
+        anchors = tuple(
+            atom
+            for atom in neighbors[z_atom]
+            if atom != x_atom
+            and atom not in y_atoms
+            and angle(atom, z_atom, x_atom, coords) <= linear_threshold
+            and ring_counts[atom] < 2
+        )
+        if not anchors:
+            continue
+        equivalent = _branches_are_equivalent(
+            y_atoms,
+            excluded_center=x_atom,
+            atomic_numbers=atomic_numbers,
+            effective_atomic_numbers=effective_atomic_numbers,
+            neighbors=neighbors,
+            atom_ring=atom_ring,
+        )
+        if not equivalent:
+            continue
+        ordered_y = tuple(
+            sorted(
+                y_atoms,
+                key=lambda atom: (
+                    -round(effective_atomic_numbers[atom] / threshold),
+                    -atomic_numbers[atom],
+                    -len(neighbors[atom]),
+                    atom,
+                ),
+            )
+        )
+        ordered_anchors = tuple(
+            sorted(
+                anchors,
+                key=lambda atom: (
+                    -round(effective_atomic_numbers[atom] / threshold),
+                    -atomic_numbers[atom],
+                    -len(neighbors[atom]),
+                    atom,
+                ),
+            )
+        )
+        domains.append((equivalent, x_atom, z_atom, ordered_y, ordered_anchors))
+    if not domains:
+        return None
+
+    equivalent, x_atom, z_atom, y_atoms, anchors = max(
+        domains,
+        key=lambda item: (
+            item[0],
+            round(effective_atomic_numbers[item[1]] / threshold),
+            atomic_numbers[item[1]],
+            -item[1],
+            -item[2],
+        ),
+    )
+    term_count = len(y_atoms) * len(anchors)
+    coefficient = 1.0 / np.sqrt(float(term_count))
+    return GICForgePythonCoordinate(
+        name=f"Tors{index:04d}",
+        block="Tors",
+        type_index=-3 if equivalent else -1,
         terms=tuple(
-            (coefficient, Primitive("dihedral", (left, center, right, far))) for left, far in orbit
+            (coefficient, Primitive("dihedral", (anchor, z_atom, x_atom, y_atom)))
+            for anchor in anchors
+            for y_atom in y_atoms
+        ),
+        diagnostic=(
+            f"XY3 KIND=COLLECTIVE_TORSION DOMAIN=X:{x_atom + 1}-Z:{z_atom + 1} "
+            f"Y={','.join(str(atom + 1) for atom in y_atoms)} "
+            f"ANCHORS={','.join(str(atom + 1) for atom in anchors)} "
+            f"TERMS={term_count} NORMALIZATION=UNIT_L2 "
+            f"EQUIVALENCE={'PSEUDOSYMMETRIC' if equivalent else 'HETERO'} "
+            f"PERIODICITY={3 if equivalent else 1} "
+            "GAUSSIAN_XY3_SPAN=COMMON_ROTATION "
+            "DIFFERENTIAL_BRANCH_MODES=ANGLE_BLOCK"
+        ),
+    )
+
+
+def _xy2_collective_torsion_coordinate(
+    center: int,
+    right: int,
+    *,
+    neighbors: list[list[int]],
+    atomic_numbers: tuple[int, ...],
+    effective_atomic_numbers: tuple[float, ...],
+    atom_ring: list[int],
+    ring_counts: list[int],
+    coords: np.ndarray,
+    linear_threshold: float,
+    index: int,
+) -> GICForgePythonCoordinate | None:
+    domains = []
+    for x_atom, z_atom in ((center, right), (right, center)):
+        if atom_ring[x_atom] != 0:
+            continue
+        y_atoms = tuple(sorted(atom for atom in neighbors[x_atom] if atom != z_atom))
+        if len(y_atoms) != 2:
+            continue
+        if not _branches_are_equivalent(
+            y_atoms,
+            excluded_center=x_atom,
+            atomic_numbers=atomic_numbers,
+            effective_atomic_numbers=effective_atomic_numbers,
+            neighbors=neighbors,
+            atom_ring=atom_ring,
+        ):
+            continue
+        if any(angle(y, x_atom, z_atom, coords) > linear_threshold for y in y_atoms):
+            continue
+        anchors = tuple(
+            sorted(
+                atom
+                for atom in neighbors[z_atom]
+                if atom != x_atom
+                and angle(atom, z_atom, x_atom, coords) <= linear_threshold
+                and ring_counts[atom] < 2
+            )
+        )
+        if not anchors:
+            continue
+        domains.append((x_atom, z_atom, y_atoms, anchors))
+    if not domains:
+        return None
+    threshold = 5.0e-4
+    x_atom, z_atom, y_atoms, anchors = max(
+        domains,
+        key=lambda item: (
+            round(effective_atomic_numbers[item[0]] / threshold),
+            atomic_numbers[item[0]],
+            -item[0],
+        ),
+    )
+    term_count = len(y_atoms) * len(anchors)
+    coefficient = 1.0 / np.sqrt(float(term_count))
+    return GICForgePythonCoordinate(
+        name=f"Tors{index:04d}",
+        block="Tors",
+        type_index=-2,
+        terms=tuple(
+            (coefficient, Primitive("dihedral", (anchor, z_atom, x_atom, y_atom)))
+            for anchor in anchors
+            for y_atom in y_atoms
+        ),
+        diagnostic=(
+            f"XY2 KIND=COLLECTIVE_TORSION DOMAIN=X:{x_atom + 1}-Z:{z_atom + 1} "
+            f"Y={y_atoms[0] + 1},{y_atoms[1] + 1} "
+            f"ANCHORS={','.join(str(atom + 1) for atom in anchors)} "
+            f"TERMS={term_count} NORMALIZATION=UNIT_L2 PERIODICITY=2 "
+            "DIFFERENTIAL_BRANCH_MODES=ANGLE_AND_OUT_OF_PLANE_BLOCK"
         ),
     )
 
@@ -1511,16 +2491,27 @@ def _local_salc_torsion_coordinate(
         fallback = _onedih_torsion_coordinate(center, right, **kwargs)
         if fallback is None:
             return None
+        source = (
+            f"LOCAL_SALC KIND=TORSION DOMAIN=BOND:{center + 1}-{right + 1} "
+            "GROUP=C1 LOCAL_IRREP=A1 FALLBACK=ONEDIH "
+            "REASON=NO_COMPLETE_ORBIT STABILITY=0 RANK_TEST=FAILED "
+            "CONTINUITY=LOCAL_ANALYTIC CONFIDENCE=LOW"
+        )
         return GICForgePythonCoordinate(
             name=fallback.name,
             block=fallback.block,
             terms=fallback.terms,
             type_index=fallback.type_index,
-            diagnostic=(
-                f"LOCAL_SALC KIND=TORSION DOMAIN=BOND:{center + 1}-{right + 1} "
-                "GROUP=C1 LOCAL_IRREP=A1 FALLBACK=ONEDIH "
-                "REASON=NO_COMPLETE_ORBIT STABILITY=0 RANK_TEST=FAILED "
-                "CONTINUITY=LOCAL_ANALYTIC CONFIDENCE=LOW"
+            diagnostic=source,
+            fallback_events=(
+                make_fallback_event(
+                    stage="SMITH_LOCAL_SALC",
+                    algorithm_id="ONEDIH",
+                    trigger="NO_COMPLETE_TORSION_ORBIT",
+                    domain=f"BOND:{center + 1}-{right + 1}",
+                    macrofamily="TORSION",
+                    source=source,
+                ),
             ),
         )
     # Use the complete locally equivalent orbit only when its analytic Wilson
@@ -1532,16 +2523,27 @@ def _local_salc_torsion_coordinate(
         fallback = _onedih_torsion_coordinate(center, right, **kwargs)
         if fallback is None:
             return None
+        source = (
+            f"LOCAL_SALC KIND=TORSION DOMAIN=BOND:{center + 1}-{right + 1} "
+            "GROUP=C1 LOCAL_IRREP=A1 FALLBACK=ONEDIH "
+            f"REASON=UNSTABLE_ORBIT STABILITY={stability:.6g} "
+            "RANK_TEST=FAILED CONTINUITY=LOCAL_ANALYTIC CONFIDENCE=LOW"
+        )
         return GICForgePythonCoordinate(
             name=fallback.name,
             block=fallback.block,
             terms=fallback.terms,
             type_index=fallback.type_index,
-            diagnostic=(
-                f"LOCAL_SALC KIND=TORSION DOMAIN=BOND:{center + 1}-{right + 1} "
-                "GROUP=C1 LOCAL_IRREP=A1 FALLBACK=ONEDIH "
-                f"REASON=UNSTABLE_ORBIT STABILITY={stability:.6g} "
-                "RANK_TEST=FAILED CONTINUITY=LOCAL_ANALYTIC CONFIDENCE=LOW"
+            diagnostic=source,
+            fallback_events=(
+                make_fallback_event(
+                    stage="SMITH_LOCAL_SALC",
+                    algorithm_id="ONEDIH",
+                    trigger="UNSTABLE_TORSION_ORBIT",
+                    domain=f"BOND:{center + 1}-{right + 1}",
+                    macrofamily="TORSION",
+                    source=source,
+                ),
             ),
         )
     return GICForgePythonCoordinate(
@@ -1572,6 +2574,152 @@ def _torsion_orbit_stability(
     return (norm / scale if scale > 1.0e-15 else 0.0), norm
 
 
+def _balanced_ring_anchors(ncyc: int) -> tuple[int, int, int]:
+    """Choose a deterministic, maximally balanced reference triangle.
+
+    The canonical ring origin is supplied by the topology layer.  The three
+    positive cyclic gaps differ by at most one atom; this recovers alternating
+    anchors for a six-membered ring and avoids geometry-dependent chart
+    changes during an optimization.
+    """
+
+    if ncyc < 4:
+        raise ValueError("triangular flap coordinates require at least four atoms")
+    quotient, remainder = divmod(ncyc, 3)
+    gaps = tuple(quotient + (1 if index < remainder else 0) for index in range(3))
+    return 0, gaps[0], gaps[0] + gaps[1]
+
+
+def _cyclic_arc_indices(start: int, end: int, ncyc: int) -> tuple[int, ...]:
+    values: list[int] = []
+    index = (start + 1) % ncyc
+    while index != end:
+        values.append(index)
+        index = (index + 1) % ncyc
+    return tuple(values)
+
+
+def _triangular_flap_stencil(ring: tuple[int, ...]) -> tuple[tuple[int, int, int, int], ...]:
+    """Return the N-3 oriented hinges of a balanced triangle tree.
+
+    Each quartet is ``(parent_third, edge_start, edge_end, child_third)``.
+    Its signed plane-incidence angle is evaluated by the analytic torsional
+    kernel, but it is not an endocyclic bond torsion: the central edge is a
+    triangulation diagonal and the two adjacent triples are triangular faces.
+    """
+
+    ncyc = len(ring)
+    if ncyc <= 3:
+        return ()
+    anchor_indices = _balanced_ring_anchors(ncyc)
+    stencils: list[tuple[int, int, int, int]] = []
+    for arc_index in range(3):
+        start_index = anchor_indices[arc_index]
+        end_index = anchor_indices[(arc_index + 1) % 3]
+        parent_index = anchor_indices[(arc_index + 2) % 3]
+        interior = _cyclic_arc_indices(start_index, end_index, ncyc)
+        if not interior:
+            continue
+        # The outermost face hinges directly on the reference triangle.
+        stencils.append(
+            (
+                ring[parent_index],
+                ring[start_index],
+                ring[end_index],
+                ring[interior[-1]],
+            )
+        )
+        # Remaining faces form a fan rooted at the arc's first anchor.
+        for position in range(len(interior) - 1, 0, -1):
+            stencils.append(
+                (
+                    ring[end_index],
+                    ring[start_index],
+                    ring[interior[position]],
+                    ring[interior[position - 1]],
+                )
+            )
+    if len(stencils) != ncyc - 3:
+        raise RuntimeError(f"triangular flap stencil has {len(stencils)} rows; expected {ncyc - 3}")
+    return tuple(stencils)
+
+
+def _flap_quaternion(
+    atoms: tuple[int, int, int, int], coords: np.ndarray
+) -> tuple[float, np.ndarray, float]:
+    """Return canonical hinge quaternion and its signed angle.
+
+    The scalar part is kept non-negative, fixing the Q == -Q ambiguity for
+    incidence angles in the principal interval.  ``atan2`` in the primitive
+    dihedral kernel retains the sign and remains continuous through zero.
+    """
+
+    angle_value = float(eval_primitive(Primitive("dihedral", atoms), coords))
+    edge = np.asarray(coords[atoms[2]] - coords[atoms[1]], dtype=float)
+    edge_norm = float(np.linalg.norm(edge))
+    if edge_norm <= 1.0e-14:
+        raise ValueError("collapsed triangular-flap hinge")
+    axis = edge / edge_norm
+    scalar = float(np.cos(0.5 * angle_value))
+    vector = axis * float(np.sin(0.5 * angle_value))
+    if scalar < 0.0:
+        scalar = -scalar
+        vector = -vector
+    recovered = float(2.0 * np.arctan2(np.dot(axis, vector), scalar))
+    return scalar, vector, recovered
+
+
+def _cyclic_triangular_flap_coordinates(
+    ring: tuple[int, ...],
+    *,
+    coords: np.ndarray,
+    prefix: str,
+    start: int,
+    diagnostic: str = "",
+) -> list[GICForgePythonCoordinate]:
+    """Build the default minimal curvilinear ring-puckering chart."""
+
+    stencils = _triangular_flap_stencil(ring)
+    if not stencils:
+        return []
+    primitives = tuple(Primitive("dihedral", atoms) for atoms in stencils)
+    flap_b = b_matrix_analytic(primitives, coords)
+    singular_values = np.linalg.svd(flap_b, compute_uv=False)
+    expected_rank = len(ring) - 3
+    rank = _svd_rank(singular_values)
+    if rank != expected_rank or singular_values[-1] <= 1.0e-12:
+        return []
+    condition = float(singular_values[0] / singular_values[-1])
+    if not np.isfinite(condition) or condition > 1.0e10:
+        return []
+    anchors = _balanced_ring_anchors(len(ring))
+    anchor_atoms = ",".join(str(ring[index] + 1) for index in anchors)
+    coordinates: list[GICForgePythonCoordinate] = []
+    for mode, primitive in enumerate(primitives, start=1):
+        scalar, vector, recovered = _flap_quaternion(primitive.atoms, coords)
+        quaternion = ",".join(
+            f"{value:.10g}" for value in (scalar, vector[0], vector[1], vector[2])
+        )
+        coordinates.append(
+            GICForgePythonCoordinate(
+                name=f"{prefix}{start + len(coordinates):04d}",
+                block=prefix,
+                type_index=15,
+                terms=((1.0, primitive),),
+                diagnostic=(
+                    f"{diagnostic} MODEL=TRIANGULAR_FLAP "
+                    f"PRIMITIVE=SIGNED_PLANE_INCIDENCE KERNEL=ATAN2_DIHEDRAL "
+                    f"REFERENCE_TRIANGLE={anchor_atoms} TREE_EDGE={mode} "
+                    f"FLAP_RANK={rank}/{expected_rank} "
+                    f"FLAP_CONDITION={condition:.3e} "
+                    f"VALUE_DEG={np.rad2deg(recovered):.10g} "
+                    f"QUATERNION={quaternion} QUATERNION_SIGN=SCALAR_NONNEGATIVE"
+                ).strip(),
+            )
+        )
+    return coordinates
+
+
 def _cyclic_out_of_plane_coordinates(
     ring: tuple[int, ...],
     *,
@@ -1588,7 +2736,8 @@ def _cyclic_out_of_plane_coordinates(
     counterpart U(b,a,d,c) and form the same n-3 Fourier subspace.  The
     construction is also attempted for nonplanar rings; it is accepted only
     when the analytic U-based B rows retain full rank and a finite condition
-    number.  Otherwise the caller uses the local dihedral fallback.
+    number.  Failure is reported explicitly; the selected model is never
+    replaced silently by endocyclic dihedrals.
     """
 
     ncyc = len(ring)
@@ -1601,9 +2750,7 @@ def _cyclic_out_of_plane_coordinates(
     out_of_planes = []
     for torsion in torsions:
         first, center, third, fourth = torsion.atoms
-        out_of_planes.append(
-            Primitive("out_of_plane", (center, first, fourth, third))
-        )
+        out_of_planes.append(Primitive("out_of_plane", (center, first, fourth, third)))
 
     coefficients = _cyclic_reference_coefficients(ncyc, valence_angle=False)
     primitive_b = b_matrix_analytic(tuple(out_of_planes), coords)
@@ -1641,6 +2788,169 @@ def _cyclic_out_of_plane_coordinates(
             )
         )
     return coordinates
+
+
+def _charm_height_source_primitives(
+    ring: tuple[int, ...],
+) -> tuple[tuple[Primitive, ...], ...]:
+    """Return cyclically balanced signed-height averages for every vertex.
+
+    For an even ring of size at least six, the unique antipodal vertex is
+    excluded from the reference pool.  This recovers exactly the four
+    leave-one-out planes used by Marenich, Brothers, Hratchian and Frisch for
+    each axial carbon of cyclohexane.  Odd rings have no unique antipode and
+    therefore use all non-target vertices.  Uniformly spaced triplets keep
+    the number of H primitives linear in ring size while treating every
+    reference-pool vertex equivalently.
+    """
+
+    ncyc = len(ring)
+    if ncyc <= 3:
+        return ()
+    sources: list[tuple[Primitive, ...]] = []
+    for target_index, target in enumerate(ring):
+        excluded = {target_index}
+        if ncyc >= 6 and ncyc % 2 == 0:
+            excluded.add((target_index + ncyc // 2) % ncyc)
+        pool_indices = tuple(
+            (target_index + offset) % ncyc
+            for offset in range(1, ncyc)
+            if (target_index + offset) % ncyc not in excluded
+        )
+        if len(pool_indices) < 3:
+            pool_indices = tuple(index for index in range(ncyc) if index != target_index)
+        size = len(pool_indices)
+        first_offset = max(1, size // 3)
+        second_offset = max(first_offset + 1, (2 * size) // 3)
+        second_offset = min(second_offset, size - 1)
+        triples: list[tuple[int, int, int]] = []
+        seen: set[frozenset[int]] = set()
+        for origin in range(size):
+            triple = (
+                pool_indices[origin],
+                pool_indices[(origin + first_offset) % size],
+                pool_indices[(origin + second_offset) % size],
+            )
+            key = frozenset(triple)
+            if len(key) != 3 or key in seen:
+                continue
+            seen.add(key)
+            triples.append(triple)
+        if not triples:
+            return ()
+        # Reverse the cyclic plane orientation to reproduce the sign used in
+        # the published cyclohexane H combinations.  H(i,j,k,l) has plane
+        # j-i-k and out-of-plane atom l in Gaussian notation.
+        sources.append(
+            tuple(
+                Primitive(
+                    "out_of_plane_height",
+                    (ring[first], ring[third], ring[second], target),
+                )
+                for first, second, third in triples
+            )
+        )
+    return tuple(sources)
+
+
+def _cyclic_charm_coordinates(
+    ring: tuple[int, ...],
+    *,
+    coords: np.ndarray,
+    prefix: str,
+    start: int,
+    diagnostic: str = "",
+) -> list[GICForgePythonCoordinate]:
+    """Build generic Cyclic Height-Averaged Ring Modes (CHARM)."""
+
+    ncyc = len(ring)
+    sources = _charm_height_source_primitives(ring)
+    if len(sources) != ncyc:
+        return []
+    source_terms = tuple(
+        tuple((1.0 / len(primitives), primitive) for primitive in primitives)
+        for primitives in sources
+    )
+    source_b = np.vstack(
+        [
+            sum(
+                coefficient * b_matrix_analytic((primitive,), coords)[0]
+                for coefficient, primitive in terms
+            )
+            for terms in source_terms
+        ]
+    )
+    coefficients = _cyclic_reference_coefficients(ncyc, valence_angle=False)
+    mode_b = coefficients.T @ source_b
+    singular_values = np.linalg.svd(mode_b, compute_uv=False)
+    expected_rank = ncyc - 3
+    rank = _svd_rank(singular_values)
+    if rank != expected_rank or singular_values[-1] <= 1.0e-12:
+        return []
+    condition = float(singular_values[0] / singular_values[-1])
+    if not np.isfinite(condition) or condition > 1.0e10:
+        return []
+    coordinates: list[GICForgePythonCoordinate] = []
+    for mode in range(coefficients.shape[1]):
+        terms = tuple(
+            (float(source_coefficient) * float(height_coefficient), primitive)
+            for source_coefficient, height_terms in zip(coefficients[:, mode], source_terms)
+            if abs(float(source_coefficient)) > 1.0e-12
+            for height_coefficient, primitive in height_terms
+        )
+        coordinates.append(
+            GICForgePythonCoordinate(
+                name=f"{prefix}{start + len(coordinates):04d}",
+                block=prefix,
+                type_index=15,
+                terms=terms,
+                diagnostic=(
+                    f"{diagnostic} MODEL=CHARM "
+                    f"PRIMITIVE=OUT_OF_PLANE_HEIGHT KERNEL=GAUSSIAN_H "
+                    f"SOURCE_HEIGHTS={len(sources)} "
+                    f"HEIGHT_TERMS_MIN={min(map(len, sources))} "
+                    f"HEIGHT_TERMS_MAX={max(map(len, sources))} "
+                    f"H_RANK={rank}/{expected_rank} H_CONDITION={condition:.3e} "
+                    f"LOCAL_IRREP=FOURIER_{mode + 1} MODE={mode + 1}"
+                ).strip(),
+            )
+        )
+    return coordinates
+
+
+def build_charm_ring_coordinates(
+    ring: tuple[int, ...] | list[int],
+    coordinates_angstrom: np.ndarray,
+    *,
+    prefix: str = "RPck",
+    start: int = 1,
+) -> tuple[GICForgePythonCoordinate, ...]:
+    """Return SMITH's canonical CHARM rows for one ORACLE-ordered cycle.
+
+    This is the public in-memory entry point for consumers such as ARCHITECT.
+    It deliberately delegates to the same implementation used by GICForge so
+    no second ring-coordinate definition can arise.
+    """
+
+    atoms = tuple(int(atom) for atom in ring)
+    xyz = np.asarray(coordinates_angstrom, dtype=float)
+    if len(atoms) < 5 or len(set(atoms)) != len(atoms):
+        raise ValueError("CHARM requires an ordered cycle of at least five distinct atoms")
+    if xyz.ndim != 2 or xyz.shape[1] != 3 or np.any(~np.isfinite(xyz)):
+        raise ValueError("CHARM coordinates require a finite (natoms, 3) geometry")
+    if min(atoms) < 0 or max(atoms) >= len(xyz):
+        raise ValueError("CHARM ring atom lies outside the geometry")
+    rows = _cyclic_charm_coordinates(
+        atoms,
+        coords=xyz,
+        prefix=str(prefix),
+        start=int(start),
+        diagnostic="ORACLE_ORDERED_CYCLE DIRECT_ARCHITECT_CONSUMER",
+    )
+    expected = len(atoms) - 3
+    if len(rows) != expected:
+        raise ValueError(f"SMITH CHARM construction is rank deficient ({len(rows)}/{expected})")
+    return tuple(rows)
 
 
 def _cyclic_coordinates(
@@ -1682,16 +2992,12 @@ def _cyclic_coordinates(
             iang2 = _cyclic_index(iterm + istart, ncyc)
             iang3 = _cyclic_index(iterm + istart + 1, ncyc)
             iang4 = _cyclic_index(iterm + istart + 2, ncyc)
-            ivar1 = ivar
-            if ivar == 1:
-                ivar1 = ivar + 1
-            if ivar == 4:
-                ivar1 = ivar - 1
-            if ivar == 5:
-                ivar1 = ivar - 1
-            if ivar == 6:
-                ivar1 = ivar - 2
-            snum = float(2 * ivar1 * (iterm - 1))
+            # The N-3 cyclic-deformation rows are the sine/cosine pairs for
+            # harmonics k=2,3,..., plus the alternating mode for even N.  The
+            # former case-by-case map covered only the first three pairs and
+            # generated an identically zero sine row once N reached 16.
+            harmonic = (ivar + 1) // 2 + 1
+            snum = float(2 * harmonic * (iterm - 1))
             value = np.pi * snum / float(ncyc)
             if even:
                 coefficient = vnorm * np.sin(value)
@@ -1719,9 +3025,7 @@ def _cyclic_coordinates(
                 type_index=14 if valence_angle else 1,
                 terms=tuple(terms),
                 diagnostic=(
-                    f"{diagnostic} LOCAL_IRREP=FOURIER_{ivar} MODE={ivar}"
-                    if diagnostic
-                    else ""
+                    f"{diagnostic} LOCAL_IRREP=FOURIER_{ivar} MODE={ivar}" if diagnostic else ""
                 ),
             )
         )
@@ -1799,7 +3103,9 @@ def _ring_dihedral_flexibilities(
         iang2 = _cyclic_index(iterm + ncyc, ncyc)
         iang3 = _cyclic_index(iterm + ncyc + 1, ncyc)
         orders.append(
-            _geometric_bond_order(ring[iang2], ring[iang3], coords=coords, atomic_numbers=atomic_numbers)
+            _geometric_bond_order(
+                ring[iang2], ring[iang3], coords=coords, atomic_numbers=atomic_numbers
+            )
         )
     finite = [order for order in orders if order is not None and order > 1.0e-12]
     if len(finite) != len(orders):
@@ -1824,7 +3130,9 @@ def _geometric_bond_order(
     radius_right = covalent_radius(atomic_numbers[right]) or 0.0
     reference = float(radius_left) + float(radius_right)
     distance = float(
-        np.linalg.norm(np.asarray(coords[right], dtype=float) - np.asarray(coords[left], dtype=float))
+        np.linalg.norm(
+            np.asarray(coords[right], dtype=float) - np.asarray(coords[left], dtype=float)
+        )
     )
     if reference <= 0.0 or distance <= 1.0e-12:
         return None
@@ -1900,35 +3208,24 @@ def _cyclic_primitives_legacy_order(
 
 
 def _cyclic_reference_coefficients(ncyc: int, *, valence_angle: bool) -> np.ndarray:
-    reference = np.zeros((ncyc, max(0, ncyc - 3)), dtype=float)
-    if ncyc <= 3:
-        return reference
-    vnorm = np.sqrt(2.0 / float(ncyc))
-    vnorm1 = np.sqrt(1.0 / float(ncyc))
-    for ivar in range(1, ncyc - 2):
-        even = ivar == 2 * (ivar // 2)
-        ivar1 = ivar
-        if ivar == 1:
-            ivar1 = ivar + 1
-        if ivar == 4:
-            ivar1 = ivar - 1
-        if ivar == 5:
-            ivar1 = ivar - 1
-        if ivar == 6:
-            ivar1 = ivar - 2
-        for iterm in range(1, ncyc + 1):
-            snum = float(2 * ivar1 * (iterm - 1))
-            value = np.pi * snum / float(ncyc)
-            if even:
-                coefficient = vnorm * np.sin(value)
-            elif ivar < ncyc - 3:
-                coefficient = vnorm * np.cos(value)
-            else:
-                coefficient = vnorm1 * np.cos(float(iterm - 1) * np.pi)
-            if abs(coefficient) < 1.0e-14:
-                coefficient = 0.0
-            reference[iterm - 1, ivar - 1] = float(coefficient)
-    return reference
+    """Return the topology-only real Fourier basis for cyclic deformations.
+
+    In the linearized height representation of a regular planar reference,
+    translation of the ring plane and its two rigid tilts occupy Fourier
+    wavenumbers zero and one.  The remaining modes therefore start at m=2.
+    For nonlinear local-U sources this is a topology-only reference basis, not
+    an exact finite-geometry separation; the actual projected B rows are rank
+    checked before use.  Cosine/sine pairs are followed, for even rings, by the
+    unpaired crown mode m=N/2.  The construction supplies exactly N-3
+    orthonormal columns for any N >= 4 and has no chemical weighting.
+
+    ``valence_angle`` remains part of the private call contract because the
+    same reference basis is used to align both cyclic bend and puckering
+    source spaces.
+    """
+
+    del valence_angle
+    return cyclic_out_of_plane_coefficients(ncyc)
 
 
 def _align_svd_modes_to_reference(u_matrix: np.ndarray, reference: np.ndarray) -> np.ndarray:
@@ -1976,6 +3273,7 @@ def _svd_local_coordinates(
     kind_type_index: int,
     max_modes: int | None = None,
     diagnostic: str = "",
+    fallback_events: tuple[FallbackEvent, ...] = (),
 ) -> list[GICForgePythonCoordinate]:
     if not primitives:
         return []
@@ -2002,6 +3300,7 @@ def _svd_local_coordinates(
                 type_index=kind_type_index,
                 terms=terms,
                 diagnostic=f"{diagnostic} MODE={mode + 1}" if diagnostic else "",
+                fallback_events=fallback_events,
             )
         )
     return coordinates
@@ -2050,10 +3349,11 @@ def _local_salc_coordinates(
 
 
 def _svd_rank(singular_values: np.ndarray) -> int:
-    if singular_values.size == 0:
-        return 0
-    tolerance = max(1.0e-10, 1.0e-8 * float(singular_values[0]))
-    return int(np.sum(singular_values > tolerance))
+    return spectrum_rank(
+        singular_values,
+        absolute_tolerance=1.0e-10,
+        relative_tolerance=1.0e-8,
+    )
 
 
 def _canonical_svd_coefficients(coefficients: np.ndarray) -> np.ndarray:
@@ -2077,6 +3377,30 @@ def _bond_length_coordinates(
     settings: LocalSALCSettings | None = None,
 ) -> list[GICForgePythonCoordinate]:
     local_settings = settings or LocalSALCSettings()
+    if not local_salc:
+        # The legacy Fortran chart emits primitive stretches in canonical
+        # bond order.  Do the same here: local equivalence must not make the
+        # persistent coordinate identity depend on geometry or atom traversal.
+        return [
+            GICForgePythonCoordinate(
+                name=f"Stre{index:04d}",
+                block="Stre",
+                type_index=0,
+                terms=((1.0, primitive),),
+                diagnostic=(
+                    "LOCAL_EQUIVALENCE KIND=STRETCH GROUP=C1 "
+                    "CANONICAL_PRIMITIVE=YES "
+                    f"BOND={primitive.atoms[0] + 1}-{primitive.atoms[1] + 1}"
+                ),
+            )
+            for index, primitive in enumerate(
+                sorted(
+                    (coordinate.terms[0][1] for coordinate in bond_primitives),
+                    key=lambda item: tuple(sorted(item.atoms)),
+                ),
+                start=1,
+            )
+        ]
     if local_salc and neighbors is not None and selected_rings is not None:
         records = _bond_primitive_domain_records(
             bond_primitives,
@@ -2219,7 +3543,9 @@ def _bond_primitive_domain_records(
             ),
             start=1,
         ):
-            ligands = [next(atom for atom in primitive.atoms if atom != center) for primitive in equivalent]
+            ligands = [
+                next(atom for atom in primitive.atoms if atom != center) for primitive in equivalent
+            ]
             classes = _local_ligand_equivalence_classes(
                 center,
                 ligands,
@@ -2243,9 +3569,7 @@ def _bond_primitive_domain_records(
                 settings=settings,
                 match=match,
             )
-            template_diagnostic = (
-                _local_template_diagnostic(match) if len(ligands) >= 5 else ""
-            )
+            template_diagnostic = _local_template_diagnostic(match) if len(ligands) >= 5 else ""
             records.append(
                 (
                     "LOCAL_SALC KIND=STRETCH "
@@ -2313,7 +3637,9 @@ def _bond_primitives_by_equivalence(
 
 
 def _primitive_atom_group_token(primitives: tuple[Primitive, ...] | list[Primitive]) -> str:
-    return "+".join("-".join(str(int(atom) + 1) for atom in primitive.atoms) for primitive in primitives)
+    return "+".join(
+        "-".join(str(int(atom) + 1) for atom in primitive.atoms) for primitive in primitives
+    )
 
 
 def _cyclic_index(index_1based: int, ncyc: int) -> int:
@@ -2414,11 +3740,44 @@ def _four_atom_angle_coordinates(
     center: int,
     neigh: list[int],
     *,
+    atomic_numbers: tuple[int, ...],
     effective_atomic_numbers: tuple[float, ...],
+    neighbors: list[list[int]],
     atom_ring: list[int],
     coords: np.ndarray,
+    force_xy3_salc: bool = False,
     start: int,
 ) -> list[GICForgePythonCoordinate]:
+    if force_xy3_salc:
+        xy3_domains = []
+        for z_atom in neigh:
+            y_atoms = tuple(atom for atom in neigh if atom != z_atom)
+            if (
+                len({atomic_numbers[atom] for atom in y_atoms}) == 1
+                and len({len(neighbors[atom]) for atom in y_atoms}) == 1
+            ):
+                xy3_domains.append((z_atom, tuple(sorted(y_atoms))))
+        if xy3_domains:
+            z_atom, y_atoms = max(
+                xy3_domains,
+                key=lambda item: (
+                    len({atomic_numbers[atom] for atom in item[1]}),
+                    round(effective_atomic_numbers[item[0]] / 5.0e-4),
+                    -item[0],
+                ),
+            )
+            frozen = {
+                atom: atom_ring[atom] != 0 and atom_ring[center] != 0 for atom in (z_atom, *y_atoms)
+            }
+            return _wxy3_coordinates(
+                center,
+                z_atom,
+                y_atoms[0],
+                y_atoms[1],
+                y_atoms[2],
+                frozen=frozen,
+                start=start,
+            )
     first, second, third, fourth = _order_four_atom_neighbors(
         tuple(neigh),
         center=center,
@@ -2462,6 +3821,281 @@ def _four_atom_angle_coordinates(
         frozen=frozen,
         start=start,
     )
+
+
+def _xy3_angle_domain(
+    center: int,
+    neigh: list[int],
+    *,
+    atomic_numbers: tuple[int, ...],
+    effective_atomic_numbers: tuple[float, ...],
+    neighbors: list[list[int]],
+    atom_ring: list[int],
+) -> tuple[int, tuple[int, int, int]] | None:
+    if len(neigh) != 4 or atom_ring[center] != 0:
+        return None
+    candidates = []
+    for z_atom in neigh:
+        y_atoms = tuple(sorted(atom for atom in neigh if atom != z_atom))
+        if _branches_are_equivalent(
+            y_atoms,
+            excluded_center=center,
+            atomic_numbers=atomic_numbers,
+            effective_atomic_numbers=effective_atomic_numbers,
+            neighbors=neighbors,
+            atom_ring=atom_ring,
+        ) and not _branches_are_equivalent(
+            (*y_atoms, z_atom),
+            excluded_center=center,
+            atomic_numbers=atomic_numbers,
+            effective_atomic_numbers=effective_atomic_numbers,
+            neighbors=neighbors,
+            atom_ring=atom_ring,
+        ):
+            candidates.append((z_atom, y_atoms))
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda item: (
+            round(effective_atomic_numbers[item[0]] / 5.0e-4),
+            atomic_numbers[item[0]],
+            -item[0],
+        ),
+    )
+
+
+def _xy2_angle_domain(
+    center: int,
+    neigh: list[int],
+    *,
+    atomic_numbers: tuple[int, ...],
+    effective_atomic_numbers: tuple[float, ...],
+    neighbors: list[list[int]],
+    atom_ring: list[int],
+) -> tuple[int, tuple[int, int]] | None:
+    if len(neigh) != 3 or atom_ring[center] != 0:
+        return None
+    candidates = []
+    for z_atom in neigh:
+        y_atoms = tuple(sorted(atom for atom in neigh if atom != z_atom))
+        if _branches_are_equivalent(
+            y_atoms,
+            excluded_center=center,
+            atomic_numbers=atomic_numbers,
+            effective_atomic_numbers=effective_atomic_numbers,
+            neighbors=neighbors,
+            atom_ring=atom_ring,
+        ) and not _branches_are_equivalent(
+            (*y_atoms, z_atom),
+            excluded_center=center,
+            atomic_numbers=atomic_numbers,
+            effective_atomic_numbers=effective_atomic_numbers,
+            neighbors=neighbors,
+            atom_ring=atom_ring,
+        ):
+            candidates.append((z_atom, y_atoms))
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda item: (
+            round(effective_atomic_numbers[item[0]] / 5.0e-4),
+            atomic_numbers[item[0]],
+            -item[0],
+        ),
+    )
+
+
+def _tricoordinate_out_of_plane_atom_orders(
+    center: int,
+    substituents: tuple[int, int, int],
+    *,
+    atomic_numbers: tuple[int, ...],
+    effective_atomic_numbers: tuple[float, ...],
+    neighbors: list[list[int]],
+    atom_ring: list[int],
+    coords: np.ndarray,
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Choose a continuous native-U chart for a tricoordinate center."""
+
+    ordered = tuple(sorted(substituents))
+    ring_substituents = tuple(
+        atom
+        for atom in substituents
+        if atom_ring[atom] != 0 and atom_ring[atom] == atom_ring[center]
+    )
+    if len(ring_substituents) == 2:
+        exocyclic = next(atom for atom in ordered if atom not in ring_substituents)
+        return ((center, *ring_substituents, exocyclic),)
+    all_equivalent = _branches_are_equivalent(
+        ordered,
+        excluded_center=center,
+        atomic_numbers=atomic_numbers,
+        effective_atomic_numbers=effective_atomic_numbers,
+        neighbors=neighbors,
+        atom_ring=atom_ring,
+    )
+    if all_equivalent:
+        first, second, third = ordered
+        return (
+            (center, first, second, third),
+            (center, second, third, first),
+            (center, third, first, second),
+        )
+
+    equivalent_pairs = []
+    for first, second in combinations(ordered, 2):
+        if _branches_are_equivalent(
+            (first, second),
+            excluded_center=center,
+            atomic_numbers=atomic_numbers,
+            effective_atomic_numbers=effective_atomic_numbers,
+            neighbors=neighbors,
+            atom_ring=atom_ring,
+        ):
+            unique = next(atom for atom in ordered if atom not in {first, second})
+            equivalent_pairs.append((first, second, unique))
+    if len(equivalent_pairs) == 1:
+        first, second, unique = equivalent_pairs[0]
+        return ((center, first, second, unique),)
+
+    c2v_order = _c2v_like_tricoordinate_order(center, ordered, coords=coords)
+    if c2v_order is not None:
+        return (c2v_order,)
+    first, second, third = ordered
+    return (
+        (center, first, second, third),
+        (center, second, third, first),
+        (center, third, first, second),
+    )
+
+
+def _c2v_like_tricoordinate_order(
+    center: int,
+    substituents: tuple[int, int, int],
+    *,
+    coords: np.ndarray,
+    pair_margin: float = 0.45,
+    absolute_tolerance: float = 2.0e-2,
+) -> tuple[int, int, int, int] | None:
+    vectors = {
+        atom: np.asarray(coords[atom] - coords[center], dtype=float) for atom in substituents
+    }
+    lengths = {atom: float(np.linalg.norm(vector)) for atom, vector in vectors.items()}
+    if any(length <= 1.0e-12 for length in lengths.values()):
+        return None
+
+    def local_angle(first: int, second: int) -> float:
+        cosine = float(np.dot(vectors[first], vectors[second]) / (lengths[first] * lengths[second]))
+        return float(np.arccos(np.clip(cosine, -1.0, 1.0)))
+
+    scored = []
+    for first, second in combinations(substituents, 2):
+        unique = next(atom for atom in substituents if atom not in {first, second})
+        length_scale = 0.5 * (lengths[first] + lengths[second])
+        length_mismatch = abs(lengths[first] - lengths[second]) / length_scale
+        angle_mismatch = abs(local_angle(first, unique) - local_angle(second, unique))
+        scored.append((float(np.hypot(length_mismatch, angle_mismatch)), first, second, unique))
+    scored.sort()
+    best, runner_up = scored[0], scored[1]
+    if best[0] > absolute_tolerance or best[0] > pair_margin * max(runner_up[0], 1.0e-12):
+        return None
+    return (center, best[1], best[2], best[3])
+
+
+def _branches_are_equivalent(
+    roots: tuple[int, ...],
+    *,
+    excluded_center: int,
+    atomic_numbers: tuple[int, ...],
+    effective_atomic_numbers: tuple[float, ...],
+    neighbors: list[list[int]],
+    atom_ring: list[int],
+) -> bool:
+    """Conservatively recognize equivalent substituent branches.
+
+    Terminal identical atoms are exactly permutable even in a distorted
+    geometry.  Nonterminal branches must additionally have the same rooted
+    graph environment after removing the special-domain center.  The
+    refinement is atom-number invariant and deliberately ignores distances,
+    so a persistent domain cannot disappear during an optimization merely
+    because its geometry becomes asymmetric.
+    """
+
+    if len(roots) < 2:
+        return False
+    if len({atomic_numbers[root] for root in roots}) != 1:
+        return False
+    if all(len(neighbors[root]) == 1 for root in roots):
+        return True
+
+    active = tuple(atom for atom in range(len(neighbors)) if atom != excluded_center)
+    labels: dict[int, object] = {
+        atom: (
+            atomic_numbers[atom],
+            round(effective_atomic_numbers[atom] / 5.0e-4),
+            atom_ring[atom] != 0,
+            sum(1 for other in neighbors[atom] if other != excluded_center),
+        )
+        for atom in active
+    }
+    # One-dimensional Weisfeiler-Lehman refinement distinguishes local branch
+    # environments without introducing atom labels into the signature.
+    for _iteration in range(len(active)):
+        raw = {
+            atom: (
+                labels[atom],
+                tuple(
+                    sorted(labels[other] for other in neighbors[atom] if other != excluded_center)
+                ),
+            )
+            for atom in active
+        }
+        unique = {value: index for index, value in enumerate(sorted(set(raw.values())))}
+        refined = {atom: unique[value] for atom, value in raw.items()}
+        if all(refined[atom] == labels[atom] for atom in active):
+            break
+        labels = refined
+    return len({labels[root] for root in roots}) == 1
+
+
+def _xy2_angle_coordinates(
+    center: int,
+    z_atom: int,
+    first_y: int,
+    second_y: int,
+    *,
+    start: int,
+) -> list[GICForgePythonCoordinate]:
+    diagnostic = (
+        f"LOCAL_SALC KIND=XY2_ANGLE DOMAIN=CENTER:{center + 1} "
+        f"Z={z_atom + 1} Y={first_y + 1},{second_y + 1} "
+        "GROUP=C2v BASIS=A1_PLUS_B NORMALIZATION=ORTHONORMAL"
+    )
+    return [
+        GICForgePythonCoordinate(
+            name=f"SymD{start:04d}",
+            block="SymD",
+            type_index=1,
+            terms=(
+                (2.0 / np.sqrt(6.0), Primitive("angle", (first_y, center, second_y))),
+                (-1.0 / np.sqrt(6.0), Primitive("angle", (z_atom, center, first_y))),
+                (-1.0 / np.sqrt(6.0), Primitive("angle", (z_atom, center, second_y))),
+            ),
+            diagnostic=diagnostic + " IRREP=A1",
+        ),
+        GICForgePythonCoordinate(
+            name=f"Rock{start + 1:04d}",
+            block="Rock",
+            type_index=2,
+            terms=(
+                (1.0 / np.sqrt(2.0), Primitive("angle", (z_atom, center, first_y))),
+                (-1.0 / np.sqrt(2.0), Primitive("angle", (z_atom, center, second_y))),
+            ),
+            diagnostic=diagnostic + " IRREP=B",
+        ),
+    ]
 
 
 def _order_four_atom_neighbors(
@@ -2721,6 +4355,260 @@ def _w2xy2_coordinates(
     return coordinates
 
 
+def _square_planar_out_of_plane_coordinates(
+    center: int,
+    cyclic: tuple[int, int, int, int],
+    *,
+    start: int,
+) -> list[GICForgePythonCoordinate]:
+    """Return the two canonical D4h out-of-plane SALCs for a square plane."""
+
+    if len(cyclic) != 4:
+        raise ValueError("square-planar mean height requires exactly four ligands")
+    primitives = tuple(
+        Primitive(
+            "out_of_plane_height",
+            (center, cyclic[(index + 1) % 4], cyclic[(index + 2) % 4], atom),
+        )
+        for index, atom in enumerate(cyclic)
+    )
+    coefficient_rows = (
+        (0.5, 0.5, 0.5, 0.5),
+        (0.5, -0.5, 0.5, -0.5),
+    )
+    irreps = ("A2U", "B2U")
+    return [
+        GICForgePythonCoordinate(
+            name=f"OopH{start + mode:04d}",
+            block="OopH",
+            type_index=12,
+            terms=tuple(zip(coefficients, primitives, strict=True)),
+            diagnostic=(
+                "LOCAL_SALC DOMAIN=CENTER:"
+                f"{center + 1} KIND=OUT_OF_PLANE TEMPLATE=SQUARE_PLANAR "
+                f"LOCAL_IRREP={irreps[mode]} CANONICAL_CATALOG=YES"
+            ),
+        )
+        for mode, coefficients in enumerate(coefficient_rows)
+    ]
+
+
+@lru_cache(maxsize=None)
+def _template_angle_salc_catalog(
+    template: LocalCoordinationTemplate,
+) -> tuple[tuple[tuple[int, int], ...], tuple[tuple[float, ...], ...]]:
+    """Return the fixed angular SALC basis of an ideal coordination template.
+
+    The Gram operator is built only from the immutable ideal polyhedron.  Its
+    nonzero eigenspace is consequently a template property, not a fit to the
+    molecular geometry.  Degenerate eigenvectors are legitimate partner
+    functions of the same local representation; canonical signs make the
+    stored ordering reproducible.
+    """
+
+    directions = np.asarray(template.directions, dtype=float)
+    directions /= np.linalg.norm(directions, axis=1)[:, None]
+    pairs = tuple(
+        (first, second)
+        for first, second in combinations(range(len(directions)), 2)
+        if float(np.dot(directions[first], directions[second])) > -1.0 + 1.0e-8
+    )
+    ideal_coords = np.vstack((np.zeros((1, 3), dtype=float), directions))
+    primitives = tuple(Primitive("angle", (first + 1, 0, second + 1)) for first, second in pairs)
+    primitive_b = b_matrix_analytic(primitives, ideal_coords)
+    gram = primitive_b @ primitive_b.T
+    eigenvalues, eigenvectors = np.linalg.eigh(gram)
+    scale = max(0.0, float(eigenvalues[-1])) if eigenvalues.size else 0.0
+    threshold = max(1.0e-10, 1.0e-8 * scale)
+    selected = [
+        index
+        for index in range(len(eigenvalues) - 1, -1, -1)
+        if float(eigenvalues[index]) > threshold
+    ]
+    expected_rank = 2 * len(directions) - 3
+    if template.name == "SQUARE_PLANAR":
+        expected_rank -= 2
+    if len(selected) != expected_rank:
+        raise ValueError(
+            f"ideal angular SALC catalog for {template.name} has rank "
+            f"{len(selected)}, expected {expected_rank}"
+        )
+    rows = []
+    for index in selected:
+        row = _canonical_svd_coefficients(eigenvectors[:, index].astype(float))
+        rows.append(tuple(float(value) for value in row))
+    return pairs, tuple(rows)
+
+
+def _template_ligand_assignment(
+    center: int,
+    neigh: list[int],
+    *,
+    template: LocalCoordinationTemplate,
+    coords: np.ndarray,
+) -> tuple[int, ...] | None:
+    """Map ideal template slots to ligands using the frozen cosine graph."""
+
+    directions = np.asarray(template.directions, dtype=float)
+    directions /= np.linalg.norm(directions, axis=1)[:, None]
+    actual = _local_ligand_unit_vectors(center, neigh, coords)
+    size = len(neigh)
+    if directions.shape != (size, 3):
+        return None
+    cosine_classes = _template_pair_cosine_classes(template)
+    ideal_class = np.full((size, size), -1, dtype=int)
+    actual_class = np.full((size, size), -1, dtype=int)
+    for first, second in combinations(range(size), 2):
+        ideal_class[first, second] = ideal_class[second, first] = _nearest_cosine_class(
+            float(np.dot(directions[first], directions[second])), cosine_classes
+        )
+        actual_class[first, second] = actual_class[second, first] = _nearest_cosine_class(
+            float(np.dot(actual[first], actual[second])), cosine_classes
+        )
+    ideal_signatures = tuple(
+        tuple(sorted(int(ideal_class[first, second]) for second in range(size) if second != first))
+        for first in range(size)
+    )
+    actual_signatures = tuple(
+        tuple(sorted(int(actual_class[first, second]) for second in range(size) if second != first))
+        for first in range(size)
+    )
+    assigned = [-1] * size
+    used: set[int] = set()
+
+    def assign(slot: int) -> bool:
+        if slot == size:
+            return True
+        for actual_index in range(size):
+            if actual_index in used or ideal_signatures[slot] != actual_signatures[actual_index]:
+                continue
+            if any(
+                ideal_class[slot, previous] != actual_class[actual_index, assigned[previous]]
+                for previous in range(slot)
+            ):
+                continue
+            assigned[slot] = actual_index
+            used.add(actual_index)
+            if assign(slot + 1):
+                return True
+            used.remove(actual_index)
+            assigned[slot] = -1
+        return False
+
+    if assign(0):
+        return tuple(neigh[index] for index in assigned)
+
+    # Near a cosine-class boundary the discrete graph can change even though
+    # the template decision remains valid.  Recover the same frozen slot map
+    # by aligning one maximally independent ideal triad and solving the finite
+    # assignment problem.  This SVD aligns frames; it never constructs or
+    # selects a SALC.
+    from scipy.optimize import linear_sum_assignment
+
+    anchor = max(
+        combinations(range(size), 3),
+        key=lambda triple: abs(float(np.linalg.det(directions[list(triple)]))),
+    )
+    best_score = float("inf")
+    best_assignment: tuple[int, ...] | None = None
+    for actual_anchor in permutations(range(size), 3):
+        left = directions[list(anchor)]
+        right = actual[list(actual_anchor)]
+        u_matrix, _singular, vh = np.linalg.svd(left.T @ right)
+        rotation = u_matrix @ vh
+        cost = 1.0 - directions @ rotation @ actual.T
+        rows, columns = linear_sum_assignment(cost)
+        trial = np.empty(size, dtype=int)
+        trial[rows] = columns
+        difference = directions @ directions.T - actual[trial] @ actual[trial].T
+        upper = difference[np.triu_indices(size, k=1)]
+        score = float(np.sqrt(np.mean(upper * upper)))
+        trial_atoms = tuple(neigh[index] for index in trial)
+        if score < best_score - 1.0e-14 or (
+            abs(score - best_score) <= 1.0e-14
+            and (best_assignment is None or trial_atoms < best_assignment)
+        ):
+            best_score = score
+            best_assignment = trial_atoms
+    return best_assignment
+
+
+def _template_angle_salc_coordinates(
+    center: int,
+    neigh: list[int],
+    *,
+    template: LocalCoordinationTemplate,
+    match: LocalCoordinationMatch,
+    coords: np.ndarray,
+    settings: LocalSALCSettings | None = None,
+    start: int,
+) -> list[GICForgePythonCoordinate] | None:
+    """Instantiate the fixed ideal-template angular SALCs on one center."""
+
+    assignment = _template_ligand_assignment(
+        center,
+        neigh,
+        template=template,
+        coords=coords,
+    )
+    if assignment is None:
+        return None
+    local_settings = settings or LocalSALCSettings()
+    pairs, coefficient_rows = _template_angle_salc_catalog(template)
+    primitives = tuple(
+        Primitive(
+            "angle",
+            (
+                min(assignment[first], assignment[second]),
+                center,
+                max(assignment[first], assignment[second]),
+            ),
+        )
+        for first, second in pairs
+    )
+    group, confidence = _infer_local_pseudogroup(
+        center,
+        neigh,
+        (tuple(neigh),),
+        coords=coords,
+        match=match,
+    )
+    coordinates = [
+        GICForgePythonCoordinate(
+            name=f"HCAn{start + mode:04d}",
+            block="HCAn",
+            type_index=17,
+            terms=tuple(
+                (float(coefficient), primitive)
+                for coefficient, primitive in zip(coefficients, primitives, strict=True)
+                if abs(float(coefficient)) > 1.0e-12
+            ),
+            diagnostic=(
+                f"LOCAL_SALC KIND=ANGLE DOMAIN=CENTER:{center + 1} "
+                f"GROUP={group} CONFIDENCE={confidence} SOURCE=TEMPLATE "
+                f"ZEFF_TOL={local_settings.zeff_tolerance:.1e} "
+                f"DIST_TOL={local_settings.distance_tolerance_angstrom:.1e} "
+                f"TEMPLATE_RMS_TOL={local_settings.template_rms_threshold:.6g} "
+                f"TEMPLATE_MARGIN_TOL={local_settings.template_min_margin:.6g} "
+                f"{_local_template_diagnostic(match)} "
+                f"LOCAL_IRREP={group}_BEND_{mode + 1} MODE={mode + 1} "
+                "CANONICAL_CATALOG=YES CATALOG_SOURCE=IDEAL_TEMPLATE_GRAM"
+            ),
+        )
+        for mode, coefficients in enumerate(coefficient_rows)
+    ]
+    if template.name == "SQUARE_PLANAR":
+        cyclic = (assignment[0], assignment[2], assignment[1], assignment[3])
+        coordinates.extend(
+            _square_planar_out_of_plane_coordinates(
+                center,
+                cyclic,
+                start=start + len(coordinates),
+            )
+        )
+    return coordinates
+
+
 def _wxy3_coordinates(
     center: int,
     jat: int,
@@ -2733,6 +4621,71 @@ def _wxy3_coordinates(
 ) -> list[GICForgePythonCoordinate]:
     if all(frozen[atom] for atom in (jat, kat, lat, mat)):
         return []
+    if not any(frozen.values()):
+        den_e1 = np.sqrt(6.0)
+        den_e2 = np.sqrt(2.0)
+        den_a1 = np.sqrt(3.0)
+        diagnostic = (
+            f"LOCAL_SALC KIND=XY3_ANGLE DOMAIN=CENTER:{center + 1} "
+            f"Z={jat + 1} Y={kat + 1},{lat + 1},{mat + 1} "
+            "GROUP=C3v BASIS=A1_PLUS_2E NORMALIZATION=ORTHONORMAL"
+        )
+        return [
+            GICForgePythonCoordinate(
+                name=f"Rock{start:04d}",
+                block="Rock",
+                type_index=2,
+                terms=(
+                    (2.0 / den_e1, Primitive("angle", (jat, center, kat))),
+                    (-1.0 / den_e1, Primitive("angle", (jat, center, lat))),
+                    (-1.0 / den_e1, Primitive("angle", (jat, center, mat))),
+                ),
+                diagnostic=diagnostic + " IRREP=E COMPONENT=1 SOURCE=ZXY",
+            ),
+            GICForgePythonCoordinate(
+                name=f"Rock{start + 1:04d}",
+                block="Rock",
+                type_index=2,
+                terms=(
+                    (1.0 / den_e2, Primitive("angle", (jat, center, lat))),
+                    (-1.0 / den_e2, Primitive("angle", (jat, center, mat))),
+                ),
+                diagnostic=diagnostic + " IRREP=E COMPONENT=2 SOURCE=ZXY",
+            ),
+            GICForgePythonCoordinate(
+                name=f"SymD{start + 2:04d}",
+                block="SymD",
+                type_index=1,
+                terms=(
+                    (1.0 / den_a1, Primitive("angle", (kat, center, lat))),
+                    (1.0 / den_a1, Primitive("angle", (kat, center, mat))),
+                    (1.0 / den_a1, Primitive("angle", (lat, center, mat))),
+                ),
+                diagnostic=diagnostic + " IRREP=A1 SOURCE=YXY",
+            ),
+            GICForgePythonCoordinate(
+                name=f"Rock{start + 3:04d}",
+                block="Rock",
+                type_index=2,
+                terms=(
+                    (2.0 / den_e1, Primitive("angle", (kat, center, lat))),
+                    (-1.0 / den_e1, Primitive("angle", (kat, center, mat))),
+                    (-1.0 / den_e1, Primitive("angle", (lat, center, mat))),
+                ),
+                diagnostic=diagnostic + " IRREP=E COMPONENT=1 SOURCE=YXY",
+            ),
+            GICForgePythonCoordinate(
+                name=f"Rock{start + 4:04d}",
+                block="Rock",
+                type_index=2,
+                terms=(
+                    (1.0 / den_e2, Primitive("angle", (kat, center, mat))),
+                    (-1.0 / den_e2, Primitive("angle", (lat, center, mat))),
+                ),
+                diagnostic=diagnostic + " IRREP=E COMPONENT=2 SOURCE=YXY",
+            ),
+        ]
+
     den = np.sqrt(2.0)
     coordinates = [
         GICForgePythonCoordinate(
@@ -2853,23 +4806,26 @@ def _high_coord_angle_coordinates(
     local_settings = settings or LocalSALCSettings()
     angle_primitives: list[Primitive] = []
     linears: list[GICForgePythonCoordinate] = []
+    suppress_redundant_trans = len(neigh) >= 3 or _has_redundant_linear_pairs(center, neigh, coords)
     for ib, first in enumerate(neigh[:-1]):
         for second in neigh[ib + 1 :]:
             left, right = sorted((first, second))
             value = angle(left, center, right, coords)
             if value >= linear_threshold:
+                if suppress_redundant_trans:
+                    continue
                 linears.append(
                     _primitive_coordinate(
                         "LAng",
                         linear_start + len(linears),
-                        Primitive("linear_bend", (left, center, right), mode=-1),
+                        _linear_bend_primitive((left, center, right), coords, mode=-1),
                     )
                 )
                 linears.append(
                     _primitive_coordinate(
                         "LAng",
                         linear_start + len(linears),
-                        Primitive("linear_bend", (left, center, right), mode=-2),
+                        _linear_bend_primitive((left, center, right), coords, mode=-2),
                     )
                 )
             else:
@@ -3005,28 +4961,6 @@ def _high_coord_angle_group_records_by_template(
     )
 
 
-def _high_coord_angle_primitives_by_template(
-    center: int,
-    neigh: list[int],
-    *,
-    template: LocalCoordinationTemplate,
-    effective_atomic_numbers: tuple[float, ...],
-    coords: np.ndarray,
-    linear_threshold: float,
-    settings: LocalSALCSettings | None = None,
-) -> tuple[tuple[Primitive, ...], ...]:
-    return tuple(
-        primitives
-        for _key, primitives in _high_coord_angle_grouped_by_template(
-            center,
-            neigh,
-            template=template,
-            effective_atomic_numbers=effective_atomic_numbers,
-            coords=coords,
-            linear_threshold=linear_threshold,
-            settings=settings,
-        )
-    )
 
 
 def _high_coord_angle_grouped_by_template(
@@ -3176,26 +5110,14 @@ def _local_ligand_equivalence_classes(
     zeff_tolerance: float = 5.0e-4,
     distance_tolerance: float = 1.0e-3,
 ) -> tuple[tuple[int, ...], ...]:
-    groups: list[list[int]] = []
-    keys: list[tuple[float, float]] = []
-    for atom in sorted(neigh):
-        distance = float(np.linalg.norm(coords[int(atom)] - coords[int(center)]))
-        key = (float(effective_atomic_numbers[int(atom)]), distance)
-        match = next(
-            (
-                index
-                for index, other in enumerate(keys)
-                if abs(key[0] - other[0]) <= zeff_tolerance
-                and abs(key[1] - other[1]) <= distance_tolerance
-            ),
-            None,
-        )
-        if match is None:
-            keys.append(key)
-            groups.append([int(atom)])
-            continue
-        groups[match].append(int(atom))
-    return tuple(tuple(group) for _key, group in sorted(zip(keys, groups)))
+    return local_ligand_equivalence_classes(
+        center,
+        neigh,
+        effective_atomic_numbers=effective_atomic_numbers,
+        coordinates_angstrom=coords,
+        zeff_tolerance=zeff_tolerance,
+        distance_tolerance_angstrom=distance_tolerance,
+    )
 
 
 def _recognize_local_coordination_template(
@@ -3224,100 +5146,29 @@ def _local_coordination_match(
     max_rms_cosine_error: float = LOCAL_TEMPLATE_RMS_THRESHOLD,
     min_score_margin: float = LOCAL_TEMPLATE_MIN_MARGIN,
 ) -> LocalCoordinationMatch:
-    actual = _sorted_pair_cosines(_local_ligand_unit_vectors(center, neigh, coords))
-    scores: list[tuple[float, str, LocalCoordinationTemplate]] = []
-    for template in _local_coordination_templates(len(neigh)):
-        ideal = _sorted_pair_cosines(np.array(template.directions, dtype=float))
-        if len(ideal) != len(actual):
-            continue
-        score = float(np.sqrt(np.mean((actual - ideal) ** 2)))
-        scores.append((score, template.name, template))
-    if not scores:
-        return LocalCoordinationMatch(None, None, float("inf"), float("inf"), "GENERIC")
-    scores.sort(key=lambda item: (item[0], item[1]))
-    best_score, _name, best_template = scores[0]
-    second_score = scores[1][0] if len(scores) > 1 else float("inf")
-    margin = float(second_score - best_score)
-    rms_headroom = float(max_rms_cosine_error - best_score)
-    margin_headroom = float(margin - min_score_margin)
-    sensitivity = _template_threshold_sensitivity(
-        rms_headroom,
-        margin_headroom,
-        rms_threshold=max_rms_cosine_error,
-        margin_threshold=min_score_margin,
-    )
-    if best_score > max_rms_cosine_error:
-        return LocalCoordinationMatch(
-            None,
-            best_template,
-            best_score,
-            margin,
-            "OUT_OF_RANGE",
-            rms_headroom,
-            margin_headroom,
-            sensitivity,
-        )
-    if margin < min_score_margin:
-        return LocalCoordinationMatch(
-            None,
-            best_template,
-            best_score,
-            margin,
-            "AMBIGUOUS",
-            rms_headroom,
-            margin_headroom,
-            sensitivity,
-        )
-    return LocalCoordinationMatch(
-        best_template,
-        best_template,
-        best_score,
-        margin,
-        "FROZEN",
-        rms_headroom,
-        margin_headroom,
-        sensitivity,
+    return local_coordination_match(
+        center,
+        neigh,
+        coordinates_angstrom=coords,
+        max_rms_cosine_error=max_rms_cosine_error,
+        min_score_margin=min_score_margin,
     )
 
 
-def _template_threshold_sensitivity(
-    rms_headroom: float,
-    margin_headroom: float,
-    *,
-    rms_threshold: float,
-    margin_threshold: float,
-) -> str:
-    near_rms = abs(float(rms_headroom)) <= max(
-        1.0e-6,
-        LOCAL_THRESHOLD_SENSITIVITY_FRACTION * abs(float(rms_threshold)),
-    )
-    near_margin = np.isfinite(margin_headroom) and abs(float(margin_headroom)) <= max(
-        1.0e-6,
-        LOCAL_THRESHOLD_SENSITIVITY_FRACTION
-        * max(abs(float(margin_threshold)), LOCAL_TEMPLATE_MIN_MARGIN),
-    )
-    if near_rms and near_margin:
-        return "NEAR_BOTH"
-    if near_rms:
-        return "NEAR_RMS"
-    if near_margin:
-        return "NEAR_MARGIN"
-    return "STABLE"
 
 
 def _local_template_diagnostic(match: LocalCoordinationMatch) -> str:
     best = match.best_template.name if match.best_template is not None else "NONE"
+    nearest = match.nearest_template.name if match.nearest_template is not None else "NONE"
     score = "NA" if not np.isfinite(match.score) else f"{match.score:.6g}"
     margin = "NA" if not np.isfinite(match.margin) else f"{match.margin:.6g}"
     selected = match.template.name if match.template is not None else "GENERIC"
-    rms_headroom = (
-        "NA" if not np.isfinite(match.rms_headroom) else f"{match.rms_headroom:.6g}"
-    )
+    rms_headroom = "NA" if not np.isfinite(match.rms_headroom) else f"{match.rms_headroom:.6g}"
     margin_headroom = (
         "NA" if not np.isfinite(match.margin_headroom) else f"{match.margin_headroom:.6g}"
     )
     return (
-        f"TEMPLATE={selected} BEST_TEMPLATE={best} TEMPLATE_SCORE={score} "
+        f"TEMPLATE={selected} BEST_TEMPLATE={best} NEAREST_TEMPLATE={nearest} TEMPLATE_SCORE={score} "
         f"TEMPLATE_MARGIN={margin} TEMPLATE_STATUS={match.status} "
         f"TEMPLATE_RMS_HEADROOM={rms_headroom} "
         f"TEMPLATE_MARGIN_HEADROOM={margin_headroom} "
@@ -3325,169 +5176,32 @@ def _local_template_diagnostic(match: LocalCoordinationMatch) -> str:
     )
 
 
-def _local_coordination_templates(coordination: int) -> tuple[LocalCoordinationTemplate, ...]:
-    return _LOCAL_COORDINATION_TEMPLATES.get(int(coordination), ())
 
 
 def _template_pair_cosine_classes(
     template: LocalCoordinationTemplate,
     tolerance: float = 2.0e-2,
 ) -> tuple[float, ...]:
-    cosines = _sorted_pair_cosines(np.array(template.directions, dtype=float))
-    classes: list[float] = []
-    for value in cosines:
-        if not classes or abs(float(value) - classes[-1]) > tolerance:
-            classes.append(float(value))
-            continue
-        classes[-1] = 0.5 * (classes[-1] + float(value))
-    return tuple(classes)
+    return template_pair_cosine_classes(template, tolerance=tolerance)
 
 
 def _nearest_cosine_class(value: float, classes: tuple[float, ...]) -> int:
-    if not classes:
-        return 0
-    return min(range(len(classes)), key=lambda index: abs(float(value) - classes[index]))
+    return nearest_cosine_class(value, classes)
 
 
 def _ligand_pair_cosine(center: int, first: int, second: int, coords: np.ndarray) -> float:
-    first_vector = coords[int(first)] - coords[int(center)]
-    second_vector = coords[int(second)] - coords[int(center)]
-    first_norm = float(np.linalg.norm(first_vector))
-    second_norm = float(np.linalg.norm(second_vector))
-    if first_norm == 0.0 or second_norm == 0.0:
-        return 1.0
-    return float(np.dot(first_vector, second_vector) / (first_norm * second_norm))
+    return ligand_pair_cosine(center, first, second, coords)
 
 
 def _local_ligand_unit_vectors(center: int, neigh: list[int], coords: np.ndarray) -> np.ndarray:
-    vectors = []
-    for atom in neigh:
-        vector = coords[int(atom)] - coords[int(center)]
-        norm = float(np.linalg.norm(vector))
-        if norm == 0.0:
-            vectors.append(np.zeros(3, dtype=float))
-        else:
-            vectors.append(vector / norm)
-    return np.array(vectors, dtype=float)
+    return local_ligand_unit_vectors(center, neigh, coords)
 
 
 def _sorted_pair_cosines(vectors: np.ndarray) -> np.ndarray:
-    normalized = []
-    for vector in vectors:
-        norm = float(np.linalg.norm(vector))
-        normalized.append(vector / norm if norm else vector)
-    values = [
-        float(np.dot(normalized[first], normalized[second]))
-        for first in range(len(normalized) - 1)
-        for second in range(first + 1, len(normalized))
-    ]
-    return np.array(sorted(values), dtype=float)
+    return sorted_pair_cosines(vectors)
 
 
-def _regular_polygon_directions(count: int, *, z: float = 0.0, phase: float = 0.0):
-    radius = float(np.sqrt(max(0.0, 1.0 - z * z)))
-    return tuple(
-        (
-            radius * np.cos(phase + 2.0 * np.pi * index / count),
-            radius * np.sin(phase + 2.0 * np.pi * index / count),
-            z,
-        )
-        for index in range(count)
-    )
-
-
-def _normalized_directions(*directions: tuple[float, float, float]):
-    normalized = []
-    for direction in directions:
-        vector = np.array(direction, dtype=float)
-        norm = float(np.linalg.norm(vector))
-        normalized.append(tuple((vector / norm).tolist()) if norm else tuple(vector.tolist()))
-    return tuple(normalized)
-
-
-_LOCAL_COORDINATION_TEMPLATES: dict[int, tuple[LocalCoordinationTemplate, ...]] = {
-    5: (
-        LocalCoordinationTemplate(
-            "TRIGONAL_BIPYRAMIDAL",
-            _regular_polygon_directions(3) + ((0.0, 0.0, 1.0), (0.0, 0.0, -1.0)),
-        ),
-        LocalCoordinationTemplate(
-            "SQUARE_PYRAMIDAL",
-            _regular_polygon_directions(4, z=-0.35, phase=np.pi / 4.0)
-            + ((0.0, 0.0, 1.0),),
-        ),
-    ),
-    6: (
-        LocalCoordinationTemplate(
-            "OCTAHEDRAL",
-            (
-                (1.0, 0.0, 0.0),
-                (-1.0, 0.0, 0.0),
-                (0.0, 1.0, 0.0),
-                (0.0, -1.0, 0.0),
-                (0.0, 0.0, 1.0),
-                (0.0, 0.0, -1.0),
-            ),
-        ),
-        LocalCoordinationTemplate(
-            "TRIGONAL_PRISMATIC",
-            _regular_polygon_directions(3, z=0.55)
-            + _regular_polygon_directions(3, z=-0.55),
-        ),
-    ),
-    7: (
-        LocalCoordinationTemplate(
-            "PENTAGONAL_BIPYRAMIDAL",
-            _regular_polygon_directions(5) + ((0.0, 0.0, 1.0), (0.0, 0.0, -1.0)),
-        ),
-        LocalCoordinationTemplate(
-            "CAPPED_OCTAHEDRAL",
-            (
-                (1.0, 0.0, 0.0),
-                (-1.0, 0.0, 0.0),
-                (0.0, 1.0, 0.0),
-                (0.0, -1.0, 0.0),
-                (0.0, 0.0, 1.0),
-                (0.0, 0.0, -1.0),
-                (1.0, 1.0, 1.0),
-            ),
-        ),
-    ),
-    8: (
-        LocalCoordinationTemplate(
-            "SQUARE_ANTIPRISMATIC",
-            _regular_polygon_directions(4, z=0.45)
-            + _regular_polygon_directions(4, z=-0.45, phase=np.pi / 4.0),
-        ),
-        LocalCoordinationTemplate(
-            "DODECAHEDRAL_LIKE",
-            _normalized_directions(
-                (1.0, 1.0, 1.0),
-                (1.0, 1.0, -1.0),
-                (1.0, -1.0, 1.0),
-                (1.0, -1.0, -1.0),
-                (-1.0, 1.0, 1.0),
-                (-1.0, 1.0, -1.0),
-                (-1.0, -1.0, 1.0),
-                (-1.0, -1.0, -1.0),
-            ),
-        ),
-    ),
-    9: (
-        LocalCoordinationTemplate(
-            "TRICAPPED_TRIGONAL_PRISMATIC",
-            _regular_polygon_directions(3, z=0.58)
-            + _regular_polygon_directions(3, z=-0.58)
-            + _regular_polygon_directions(3, z=0.0, phase=np.pi / 3.0),
-        ),
-        LocalCoordinationTemplate(
-            "CAPPED_SQUARE_ANTIPRISMATIC",
-            _regular_polygon_directions(4, z=0.42)
-            + _regular_polygon_directions(4, z=-0.42, phase=np.pi / 4.0)
-            + ((0.0, 0.0, 1.0),),
-        ),
-    ),
-}
+_LOCAL_COORDINATION_TEMPLATES = LOCAL_COORDINATION_TEMPLATES
 
 
 def _atom_ring_map_from_rings(rings: list[tuple[int, ...]], natoms: int) -> list[int]:
@@ -3516,6 +5230,19 @@ def _primitive_coordinate(
     )
 
 
+def _linear_bend_primitive(
+    atoms: tuple[int, int, int],
+    coords: np.ndarray,
+    *,
+    mode: int,
+) -> Primitive:
+    """Construct one Gaussian-compatible local linear-bend primitive."""
+
+    reference = linear_bend_reference_atom(atoms, coords)
+    ref = (reference,) if reference is not None else ()
+    return Primitive("linear_bend", atoms, mode=mode, ref=ref)
+
+
 def _python_model_diagnostics(
     candidates: tuple[GICForgePythonCoordinate, ...],
     coordinates: tuple[GICForgePythonCoordinate, ...],
@@ -3524,10 +5251,13 @@ def _python_model_diagnostics(
     target_rank: int,
     svd_local: bool,
     local_salc: bool,
+    xy3_torsions: bool,
+    xy2_torsions: bool,
     separate_exocyclic_torsions: bool,
     onedih: bool,
     max_linear_angle_pairs_per_center: int,
     local_salc_settings: LocalSALCSettings,
+    ring_puckering_model: str,
 ) -> dict[str, object]:
     candidate_counts = _coordinate_block_counts(candidates)
     kept_counts = _coordinate_block_counts(coordinates)
@@ -3537,6 +5267,7 @@ def _python_model_diagnostics(
     }
     candidate_rank = _coordinate_b_rank(candidates, coords)
     final_rank = _coordinate_b_rank(coordinates, coords)
+    normalized_condition = _normalized_coordinate_b_condition(coordinates, coords)
     selected_local_records = {
         (coordinate.name, coordinate.diagnostic)
         for coordinate in coordinates
@@ -3551,8 +5282,11 @@ def _python_model_diagnostics(
         "backend": "gicforge-python",
         "svd_local": bool(svd_local),
         "local_salc": bool(local_salc),
+        "xy3_torsions": bool(xy3_torsions),
+        "xy2_torsions": bool(xy2_torsions),
         "separate_exocyclic_torsions": bool(separate_exocyclic_torsions),
         "onedih": bool(onedih),
+        "ring_puckering_model": ring_puckering_model,
         "target_rank": int(target_rank),
         "candidate_count": int(len(candidates)),
         "final_count": int(len(coordinates)),
@@ -3560,6 +5294,13 @@ def _python_model_diagnostics(
         "final_rank": int(final_rank),
         "rank_complete": bool(final_rank == target_rank),
         "count_complete": bool(len(coordinates) == target_rank),
+        "normalized_b_condition_number": normalized_condition,
+        "max_normalized_b_condition_number": MAX_NORMALIZED_SONIC_CONDITION,
+        "condition_accepted": bool(np.isfinite(normalized_condition)),
+        "condition_within_policy": bool(
+            np.isfinite(normalized_condition)
+            and normalized_condition <= MAX_NORMALIZED_SONIC_CONDITION
+        ),
         "max_linear_angle_pairs_per_center": int(max_linear_angle_pairs_per_center),
         "local_salc_thresholds": {
             "zeff_tolerance": local_salc_settings.zeff_tolerance,
@@ -3595,6 +5336,260 @@ def _coordinate_block_counts(coordinates: tuple[GICForgePythonCoordinate, ...]) 
     return dict(sorted(counts.items()))
 
 
+def _polyhedral_catalog_centers(
+    coordinates: tuple[GICForgePythonCoordinate, ...],
+) -> frozenset[int]:
+    """Return centers owned by an a-priori polyhedral angular catalog."""
+
+    return frozenset(
+        primitive.atoms[1]
+        for coordinate in coordinates
+        if CANONICAL_SALC_DIAGNOSTIC in coordinate.diagnostic
+        for _coefficient, primitive in coordinate.terms
+        if primitive.kind == "angle" and len(primitive.atoms) == 3
+    )
+
+
+def _without_polyhedral_axis_coordinates(
+    coordinates: tuple[GICForgePythonCoordinate, ...],
+    *,
+    polyhedral_centers: frozenset[int] | None = None,
+) -> tuple[GICForgePythonCoordinate, ...]:
+    """Remove linear-axis substitutes from recognized polyhedral domains.
+
+    A trans ligand pair is part of a polyhedron, not a covalent linear chain.
+    Its angular space is already owned by the catalog SALCs.  Treating that
+    pair as a collapsed linear center creates a dihedral whose middle
+    "bond" joins the two non-bonded ligands and couples almost singularly to
+    the catalog bends and ligand out-of-plane rows.
+    """
+
+    centers = (
+        _polyhedral_catalog_centers(coordinates)
+        if polyhedral_centers is None
+        else frozenset(polyhedral_centers)
+    )
+    if not centers:
+        return coordinates
+
+    def owned_by_polyhedral_axis(coordinate: GICForgePythonCoordinate) -> bool:
+        if any(
+            primitive.kind == "linear_bend"
+            and len(primitive.atoms) == 3
+            and primitive.atoms[1] in centers
+            for _coefficient, primitive in coordinate.terms
+        ):
+            return True
+        return "SPECIAL_LINEAR_CASE=YES" in coordinate.diagnostic and any(
+            f"COLLAPSED_CENTER={center + 1}" in coordinate.diagnostic for center in centers
+        )
+
+    return tuple(
+        coordinate for coordinate in coordinates if not owned_by_polyhedral_axis(coordinate)
+    )
+
+
+
+
+def _normalize_coordinate_b_rows(rows: np.ndarray) -> np.ndarray:
+    """Normalize B rows without rebuilding or stacking the input matrix."""
+
+    normalized = np.array(rows, dtype=float, copy=True)
+    if normalized.ndim != 2 or normalized.shape[0] == 0:
+        return normalized
+    norms = np.linalg.norm(normalized, axis=1)
+    nonzero = norms > 1.0e-12
+    normalized[nonzero] /= norms[nonzero, None]
+    return normalized
+
+
+def _cage_chart_semantics_preserved(
+    original: tuple[GICForgePythonCoordinate, ...],
+    conditioned: tuple[GICForgePythonCoordinate, ...],
+) -> bool:
+    """Keep a cage chart's defining rows and broad motion-family dimensions."""
+
+    if not any(coordinate.block in {"BtFl", "Spir"} for coordinate in original):
+        return True
+
+    special_blocks = {"BtFl", "Spir", "RDef", "RPck"}
+    original_special = {coordinate for coordinate in original if coordinate.block in special_blocks}
+    conditioned_special = {
+        coordinate for coordinate in conditioned if coordinate.block in special_blocks
+    }
+    if conditioned_special != original_special:
+        return False
+
+    def motion_family(coordinate: GICForgePythonCoordinate) -> str:
+        kind = coordinate.dominant_kind
+        if kind in {"angle", "out_of_plane", "out_of_plane_height"}:
+            return "angular"
+        if kind == "bond":
+            return "stretch"
+        if kind == "dihedral":
+            return "torsional"
+        return kind
+
+    def family_counts(
+        coordinates: tuple[GICForgePythonCoordinate, ...],
+    ) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for coordinate in coordinates:
+            family = motion_family(coordinate)
+            counts[family] = counts.get(family, 0) + 1
+        return counts
+
+    return family_counts(conditioned) == family_counts(original)
+
+
+def _normalized_coordinate_b_condition(
+    coordinates: tuple[GICForgePythonCoordinate, ...],
+    coords: np.ndarray,
+) -> float:
+    if not coordinates:
+        return float("inf")
+    return normalized_matrix_condition(
+        _coordinate_b_matrix(coordinates, coords),
+        absolute_tolerance=1.0e-12,
+        zero_row_tolerance=1.0e-12,
+        required_rank=len(coordinates),
+    )
+
+
+def _normalized_b_condition_from_singular_values(singular: np.ndarray) -> float:
+    if not singular.size or singular[-1] <= 1.0e-12:
+        return float("inf")
+    return float(singular[0] / singular[-1])
+
+
+def _coordinate_basis_audit(
+    rows: np.ndarray,
+    *,
+    certify_rank: bool = True,
+    certify_condition: bool = True,
+) -> _CoordinateBasisAudit:
+    """Compute the raw-rank and normalized-condition certificates once."""
+
+    matrix = np.asarray(rows, dtype=float)
+    normalized = _normalize_coordinate_b_rows(matrix)
+    return _CoordinateBasisAudit(
+        rows=matrix,
+        normalized_rows=normalized,
+        rank=(
+            numerical_matrix_rank(
+                matrix,
+                absolute_tolerance=1.0e-10,
+                relative_tolerance=1.0e-8,
+            )
+            if certify_rank
+            else None
+        ),
+        condition=(
+            _normalized_b_condition_from_singular_values(
+                np.linalg.svd(normalized, compute_uv=False)
+            )
+            if certify_condition
+            else None
+        ),
+    )
+
+
+def _is_analytic_salc(coordinate: GICForgePythonCoordinate) -> bool:
+    """Return whether rank selection should exhaust this analytic family first.
+
+    Priority is not a requirement that every candidate survive.  Ring and cage
+    generators can intentionally emit a redundant analytic spanning set; the
+    rank kernel must retain a maximal independent subset before it considers
+    primitive completion rows.
+    """
+
+    return SONIC_CONSTRUCTION_POLICY.is_analytic_salc(
+        block=coordinate.block,
+        diagnostic=coordinate.diagnostic,
+    )
+
+
+def _conditioned_coordinate_basis(
+    candidates: tuple[GICForgePythonCoordinate, ...],
+    selected: tuple[GICForgePythonCoordinate, ...],
+    coords: np.ndarray,
+    *,
+    target_rank: int,
+    preserve_special: bool,
+) -> tuple[GICForgePythonCoordinate, ...]:
+    """Freeze a complete, scale-independent SONIC basis or fail explicitly.
+
+    Canonical coordination-polyhedron SALCs are semantic coordinates and are
+    exhausted first.  The shared maximum-residual rank kernel chooses only
+    their complementary rows.  No Gaussian behavior or molecule identity is
+    part of this decision.
+    """
+
+    if len(selected) != target_rank:
+        return selected
+    selected_audit = _coordinate_basis_audit(_coordinate_b_matrix(selected, coords))
+    if selected_audit.rank != target_rank:
+        return selected
+    if (
+        np.isfinite(selected_audit.condition)
+        and selected_audit.condition <= MAX_NORMALIZED_SONIC_CONDITION
+    ):
+        return selected
+
+    protected_special = {
+        coordinate
+        for coordinate in selected
+        if preserve_special
+        and (
+            coordinate.block in {"BtFl", "Spir", "RDef", "RPck"}
+            or "KIND=RING_" in coordinate.diagnostic
+        )
+    }
+    candidate_audit = _coordinate_basis_audit(
+        _coordinate_b_matrix(candidates, coords),
+        certify_rank=False,
+        certify_condition=False,
+    )
+    rows = candidate_audit.normalized_rows
+    selection = select_rank_revealing_rows(
+        rows,
+        target_rank=target_rank,
+        tolerance=1.0e-10,
+        priorities=tuple(
+            0 if _is_analytic_salc(coordinate) or coordinate in protected_special else 1
+            for coordinate in candidates
+        ),
+        tie_tolerance=1.0e-12,
+    )
+    if selection.rank != target_rank:
+        raise ValueError(
+            "GICForge Python conditioned selection did not reach vibrational rank "
+            f"({selection.rank}/{target_rank})"
+        )
+    conditioned = tuple(candidates[index] for index in selection.indices)
+    catalog = {
+        coordinate
+        for coordinate in candidates
+        if CANONICAL_SALC_DIAGNOSTIC in coordinate.diagnostic
+    }
+    if not catalog.issubset(conditioned):
+        raise ValueError("canonical polyhedral SALCs are not an independent chart subspace")
+    # Do not require the whole preferred ring/cage candidate set to survive:
+    # it may be an intentionally redundant analytic span.  Priority above
+    # already selects its maximal independent subset.  Cage-specific semantic
+    # preservation is checked by _cage_chart_semantics_preserved at the caller.
+    conditioned_audit = _coordinate_basis_audit(
+        candidate_audit.rows[np.asarray(selection.indices, dtype=int)],
+        certify_rank=False,
+    )
+    if conditioned_audit.condition is None or not np.isfinite(conditioned_audit.condition):
+        raise ValueError(
+            "GICForge Python could not construct a finite SONIC chart "
+            f"(condition={conditioned_audit.condition:.6g})"
+        )
+    return conditioned
+
+
 def _coordinate_b_rank(
     coordinates: tuple[GICForgePythonCoordinate, ...], coords: np.ndarray
 ) -> int:
@@ -3609,8 +5604,28 @@ def _coordinate_b_rank(
         for coefficient, primitive in coordinate.terms:
             row += coefficient * primitive_b[row_index[primitive]]
         b_rows.append(row)
-    singular_values = np.linalg.svd(np.vstack(b_rows), compute_uv=False)
-    return _svd_rank(singular_values)
+    return numerical_matrix_rank(
+        np.vstack(b_rows),
+        absolute_tolerance=1.0e-10,
+        relative_tolerance=1.0e-8,
+    )
+
+
+def _coordinate_b_matrix(
+    coordinates: tuple[GICForgePythonCoordinate, ...], coords: np.ndarray
+) -> np.ndarray:
+    if not coordinates:
+        return np.zeros((0, int(np.asarray(coords).size)), dtype=float)
+    primitive_basis = _primitive_basis(coordinates)
+    row_index = {primitive: index for index, primitive in enumerate(primitive_basis)}
+    primitive_b = b_matrix_analytic(primitive_basis, coords)
+    rows = []
+    for coordinate in coordinates:
+        row = np.zeros(primitive_b.shape[1], dtype=float)
+        for coefficient, primitive in coordinate.terms:
+            row += coefficient * primitive_b[row_index[primitive]]
+        rows.append(row)
+    return np.vstack(rows)
 
 
 def _prune_type_local(
@@ -3633,10 +5648,7 @@ def _prune_type_local(
         coordinate
         for coordinate in coordinates
         if coordinate not in cage_special
-        and (
-            coordinate.block in {"RDef", "RPck"}
-            or "KIND=RING_" in coordinate.diagnostic
-        )
+        and (coordinate.block in {"RDef", "RPck"} or "KIND=RING_" in coordinate.diagnostic)
     ]
     # Cage-specific collective coordinates are the irreducible special modes
     # of bridged/spiro systems.  When they overlap the ordinary per-ring
@@ -3649,14 +5661,32 @@ def _prune_type_local(
         "angle": [coord for coord in ordinary if coord.dominant_kind == "angle"],
         "linear_bend": [coord for coord in ordinary if coord.dominant_kind == "linear_bend"],
         "dihedral": [coord for coord in ordinary if coord.dominant_kind == "dihedral"],
-        "out_of_plane": [coord for coord in ordinary if coord.dominant_kind == "out_of_plane"],
+        "out_of_plane": [
+            coord
+            for coord in ordinary
+            if coord.dominant_kind in {"out_of_plane", "out_of_plane_height"}
+        ],
     }
-    linear_bends = by_kind["linear_bend"]
-    forced_linear_atoms: tuple[int, ...] | None = None
+    bond_neighbors: dict[int, set[int]] = {}
+    for coordinate in by_kind["bond"]:
+        for _coefficient, primitive in coordinate.terms:
+            if primitive.kind != "bond":
+                continue
+            first, second = primitive.atoms
+            bond_neighbors.setdefault(first, set()).add(second)
+            bond_neighbors.setdefault(second, set()).add(first)
+    linear_bends = [
+        coordinate
+        for coordinate in by_kind["linear_bend"]
+        if not any(
+            len(bond_neighbors.get(center, ())) >= 3
+            for _coefficient, primitive in coordinate.terms
+            if primitive.kind == "linear_bend"
+            for center in (primitive.atoms[1],)
+        )
+    ]
     if any(coord.block == "HCAn" for coord in by_kind["angle"]):
         linear_bends = _high_coord_linear_pruning_order(linear_bends)
-        if linear_bends:
-            forced_linear_atoms = linear_bends[0].terms[0][1].atoms
     angular, promoted_out_of_plane = _native_angular_pruning_order(
         by_kind["angle"],
         by_kind["out_of_plane"],
@@ -3685,27 +5715,59 @@ def _prune_type_local(
             row += coefficient * primitive_b[row_index[primitive]]
         b_rows.append(row)
 
-    basis: list[np.ndarray] = []
+    basis = _IncrementalRowBasis(max_rows=target_rank)
     keep: list[GICForgePythonCoordinate] = []
+    # A fallback candidate pool can contain more bond primitives than the
+    # molecular vibrational rank (high-coordination clusters are the common
+    # example).  Every retained row must therefore earn an independent B-row;
+    # appending all bonds unconditionally can both exceed the target count and
+    # prevent later angle/linear rows from completing the rank.
     for index, coordinate in enumerate(ordered):
-        if coordinate.dominant_kind == "bond":
-            _seed_basis_row(b_rows[index], basis)
+        if coordinate.dominant_kind != "bond":
+            continue
+        if len(basis) >= target_rank or len(keep) >= target_rank:
+            break
+        if basis.try_add(b_rows[index]):
             keep.append(coordinate)
     for index, coordinate in enumerate(ordered):
         if coordinate.dominant_kind == "bond":
             continue
         if len(basis) >= target_rank or len(keep) >= target_rank:
             continue
-        force_keep = (
-            coordinate.dominant_kind == "linear_bend"
-            and forced_linear_atoms is not None
-            and coordinate.terms[0][1].atoms == forced_linear_atoms
-        )
-        if _seed_basis_row(b_rows[index], basis):
+        if basis.try_add(b_rows[index]):
             keep.append(coordinate)
-        elif force_keep:
-            keep.append(coordinate)
-    return tuple(keep)
+    local_selection = tuple(keep)
+    if (
+        len(local_selection) >= target_rank
+        and _coordinate_b_rank(local_selection, coords) >= target_rank
+    ):
+        return local_selection
+
+    # The global recovery is needed for the near-linear primitive family. For
+    # ordinary charts, retain the established family-prioritized selection:
+    # applying a rank-revealing pivot globally there can replace valid special
+    # coordinates even when no linear-bend closure is involved.
+    if not linear_bends:
+        return local_selection
+
+    # The sequential family-ordered pass above is intentionally conservative,
+    # but a greedy first choice can consume a direction needed by a later
+    # coordinate.  Reuse the shared rank-revealing kernel as a general fallback
+    # on the complete candidate pool.  In this recovery path the numerical
+    # pivot quality must decide the representatives: family priorities can
+    # select a formally independent but poorly conditioned basis.
+    selection = select_rank_revealing_rows(
+        np.vstack(b_rows),
+        target_rank=target_rank,
+        tolerance=1.0e-10,
+    )
+    global_selection = tuple(ordered[index] for index in selection.indices)
+    if (
+        len(global_selection) >= target_rank
+        and _coordinate_b_rank(global_selection, coords) >= target_rank
+    ):
+        return global_selection
+    return local_selection
 
 
 def _native_angular_pruning_order(
@@ -3804,12 +5866,12 @@ def _prune_block_local(
             row += coefficient * primitive_b[row_index[primitive]]
         b_rows.append(row)
 
-    basis_rows: list[np.ndarray] = []
+    basis = _IncrementalRowBasis(max_rows=target_rank)
     keep: list[GICForgePythonCoordinate] = []
     for index, coordinate in enumerate(ordered):
-        if len(basis_rows) >= target_rank or len(keep) >= target_rank:
+        if len(basis) >= target_rank or len(keep) >= target_rank:
             break
-        if _seed_basis_row_by_svd(b_rows[index], basis_rows):
+        if basis.try_add(b_rows[index]):
             keep.append(coordinate)
     return tuple(sorted(keep, key=lambda coord: coordinates.index(coord)))
 
@@ -3831,7 +5893,7 @@ def _block_pruning_priority(coordinate: GICForgePythonCoordinate) -> int:
         return 5
     if coordinate.block == "RPck":
         return 6
-    if coordinate.dominant_kind == "out_of_plane":
+    if coordinate.dominant_kind in {"out_of_plane", "out_of_plane_height"}:
         return 7
     return 8
 
@@ -3862,38 +5924,65 @@ def _high_coord_linear_pruning_order(
     return ordered
 
 
-def _seed_basis_row(
-    row: np.ndarray, basis: list[np.ndarray], *, t_abs: float = 1.0e-10, t_rel: float = 1.0e-8
-) -> bool:
-    candidate = np.asarray(row, dtype=float).copy()
-    norm0 = float(np.linalg.norm(candidate))
-    if norm0 <= t_abs:
-        return False
-    for existing in basis:
-        candidate -= float(np.dot(candidate, existing)) * existing
-    norm = float(np.linalg.norm(candidate))
-    if norm > t_abs and norm > t_rel * norm0:
-        basis.append(candidate / norm)
-        return True
-    return False
+class _IncrementalRowBasis:
+    """Stable incremental QR gate for family-ordered B rows.
 
+    The stored vectors are the rows of Q.  Two modified Gram--Schmidt passes
+    avoid the loss of orthogonality that otherwise appears for nearly
+    dependent internal coordinates.  This gate only prunes candidates; the
+    completed chart is still certified independently by the established SVD
+    rank and condition checks.
+    """
 
-def _seed_basis_row_by_svd(row: np.ndarray, basis_rows: list[np.ndarray]) -> bool:
-    candidate = np.asarray(row, dtype=float).copy()
-    norm = float(np.linalg.norm(candidate))
-    if norm <= 1.0e-10:
-        return False
-    if not basis_rows:
-        basis_rows.append(candidate)
+    __slots__ = (
+        "_count",
+        "_rows",
+        "absolute_tolerance",
+        "max_rows",
+        "relative_tolerance",
+    )
+
+    def __init__(
+        self,
+        *,
+        max_rows: int,
+        absolute_tolerance: float = 1.0e-10,
+        relative_tolerance: float = 1.0e-8,
+    ) -> None:
+        self._rows: np.ndarray | None = None
+        self._count = 0
+        self.max_rows = int(max_rows)
+        self.absolute_tolerance = float(absolute_tolerance)
+        self.relative_tolerance = float(relative_tolerance)
+
+    def __len__(self) -> int:
+        return self._count
+
+    def try_add(self, row: np.ndarray) -> bool:
+        candidate = np.asarray(row, dtype=float).copy()
+        original_norm = float(np.linalg.norm(candidate))
+        if original_norm <= self.absolute_tolerance:
+            return False
+        if self._rows is None:
+            self._rows = np.empty((self.max_rows, candidate.size), dtype=float)
+        if candidate.shape != (self._rows.shape[1],):
+            raise ValueError("incremental QR row dimension changed")
+        basis = self._rows[: self._count]
+        for _pass in range(2):
+            if self._count:
+                candidate -= (candidate @ basis.T) @ basis
+        residual_norm = float(np.linalg.norm(candidate))
+        threshold = max(
+            self.absolute_tolerance,
+            self.relative_tolerance * original_norm,
+        )
+        if residual_norm <= threshold:
+            return False
+        if self._count >= self.max_rows:
+            return False
+        self._rows[self._count] = candidate / residual_norm
+        self._count += 1
         return True
-    old = np.vstack(basis_rows)
-    new = np.vstack([old, candidate])
-    old_rank = _svd_rank(np.linalg.svd(old, compute_uv=False))
-    new_rank = _svd_rank(np.linalg.svd(new, compute_uv=False))
-    if new_rank > old_rank:
-        basis_rows.append(candidate)
-        return True
-    return False
 
 
 def _target_rank(coords: np.ndarray, graph) -> int:
@@ -3958,8 +6047,10 @@ def _format_terms(terms: tuple[tuple[float, Primitive], ...]) -> str:
             "linear_bend": "L",
             "dihedral": "D",
             "out_of_plane": "U",
+            "out_of_plane_height": "H",
         }[primitive.kind]
         if primitive.kind == "linear_bend":
-            atom_text = f"{atom_text},{primitive.mode}"
+            reference = primitive.ref[0] + 1 if len(primitive.ref) == 1 else 0
+            atom_text = f"{atom_text},{reference},{primitive.mode}"
         chunks.append(f"{coefficient:.10g}*{symbol}({atom_text})")
     return "+".join(chunks)

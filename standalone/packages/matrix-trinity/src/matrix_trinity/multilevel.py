@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import shutil
+from tempfile import TemporaryDirectory
 from collections.abc import Sequence
 
-import numpy as np
-
-from matrix_core.xyzin_geometry import replace_xyzin_geometry
+from matrix_chem.xyzin_geometry import replace_xyzin_geometry
 
 from .optimizer import (
     QMScanBackend,
@@ -42,8 +42,8 @@ class OptimizationLevel:
     timeout: float | None = None
     use_previous_hessian: bool = True
     convergence: str = "normal"
-    initial_hessian_model: str = "auto"
-    enable_gdiis: bool = False
+    initial_hessian_model: str = "lindh_swart_special"
+    enable_gdiis: bool = True
     processors: int = 1
     memory_gb: int | None = None
 
@@ -61,31 +61,54 @@ class OptimizationChainResult:
 
 
 def optimize_from_smiles_multilevel(
-    smiles: str,
+    smiles: str = "",
     *,
     run_dir: Path | str,
     levels: Sequence[OptimizationLevel],
+    source_xyz: Path | str | None = None,
     title: str = "",
     charge: int | None = None,
     multiplicity: int | None = None,
     random_seed: int = 61453,
 ) -> OptimizationChainResult:
-    """Run a sequential optimizer chain starting from an RDKit SMILES geometry."""
+    """Run a sequential MATRIX optimizer chain from an unrelaxed SWITCH seed."""
 
     if not levels:
         raise ValueError("at least one optimization level is required")
+    if bool(str(smiles).strip()) == (source_xyz is not None):
+        raise ValueError("provide exactly one of smiles or source_xyz")
     root = Path(run_dir)
     root.mkdir(parents=True, exist_ok=True)
-    initial_xyzin = _write_smiles_xyzin(
-        smiles,
-        root / "00_rdkit.xyzin",
-        title=title,
-        charge=charge,
-        multiplicity=multiplicity,
-        random_seed=random_seed,
+    needs_sonic = any(
+        str(level.coordinate_kind).replace("-", "_") == "sonic" for level in levels
     )
-    if any(str(level.coordinate_kind).replace("-", "_") == "sonic" for level in levels):
-        initial_xyzin = _write_sonic_xyzin(initial_xyzin, root / "00_rdkit_sonic.xyzin")
+    if source_xyz is None:
+        initial_xyzin = _write_smiles_xyzin(
+            smiles,
+            root / "00_switch_seed.xyzin",
+            title=title,
+            charge=charge,
+            multiplicity=multiplicity,
+            random_seed=random_seed,
+        )
+        if needs_sonic:
+            initial_xyzin = _write_sonic_xyzin(
+                initial_xyzin,
+                root / "00_oracle_sonic.xyzin",
+                source_kind="enriched_xyz",
+            )
+        initial_geometry_source = "SMILES -> MATRIX SWITCH deterministic seed"
+    else:
+        source = Path(source_xyz).expanduser().resolve()
+        if not source.is_file():
+            raise ValueError(f"source XYZ does not exist: {source}")
+        initial_xyzin = _write_sonic_xyzin(
+            source,
+            root / "00_oracle_sonic.xyzin",
+            source_kind="xyz",
+            build_sonic=needs_sonic,
+        )
+        initial_geometry_source = f"XYZ file {source}"
     current_xyzin = initial_xyzin
     previous_hessian: Path | None = None
     results: list[OptimizerResult] = []
@@ -148,6 +171,12 @@ def optimize_from_smiles_multilevel(
                 rms_displacement_tolerance=tolerances[4],
                 initial_hessian_model=level.initial_hessian_model,
                 enable_gdiis=level.enable_gdiis,
+                # An intermediate Hessian is an explicit dependency of the
+                # next level when that level requests reuse.  The terminal
+                # level never receives a final Hessian implicitly.
+                compute_final_hessian=(
+                    index < len(levels) and levels[index].use_previous_hessian
+                ),
             ),
             timeout=level.timeout,
             initial_hessian=initial_hessian,
@@ -161,6 +190,8 @@ def optimize_from_smiles_multilevel(
             result.final_coordinates_angstrom,
             comment=f"MATRIX multilevel optimized; level={level.name}",
         )
+        if needs_sonic:
+            _refresh_sonic_contract(next_xyzin)
         results.append(result)
         previous_hessian = result.final_hessian_path
         current_xyzin = next_xyzin
@@ -177,6 +208,7 @@ def optimize_from_smiles_multilevel(
                 "optimized_xyzin": str(next_xyzin),
                 "optimizer_summary": str(result.summary_path),
                 "optimizer_hessian": str(result.final_hessian_path),
+                "geometry_and_sonic_contract_refreshed": bool(needs_sonic),
                 "converged": result.converged,
                 "status": result.status,
                 "optimization_steps": len(result.iterations),
@@ -192,6 +224,8 @@ def optimize_from_smiles_multilevel(
     manifest = {
         "schema": MULTILEVEL_OPTIMIZATION_SCHEMA,
         "smiles": smiles,
+        "source_xyz": str(Path(source_xyz).expanduser().resolve()) if source_xyz else "",
+        "switch_used": source_xyz is None,
         "initial_xyzin": str(initial_xyzin),
         "final_xyzin": str(current_xyzin),
         "chain_status": "stopped" if stopped_reason else "completed",
@@ -208,7 +242,7 @@ def optimize_from_smiles_multilevel(
         title=title or smiles,
         charge=charge,
         multiplicity=multiplicity,
-        initial_geometry_source="RDKit/ETKDG + UFF",
+        initial_geometry_source=initial_geometry_source,
     )
     return OptimizationChainResult(
         smiles=smiles,
@@ -274,8 +308,10 @@ def optimization_level_from_json(payload: str | dict[str, object]) -> Optimizati
         timeout=None if data.get("timeout") is None else float(data.get("timeout")),
         use_previous_hessian=bool(data.get("use_previous_hessian", True)),
         convergence=str(data.get("convergence", "normal")),
-        initial_hessian_model=str(data.get("initial_hessian_model", "auto")),
-        enable_gdiis=bool(data.get("enable_gdiis", False)),
+        initial_hessian_model=str(
+            data.get("initial_hessian_model", "lindh_swart_special")
+        ),
+        enable_gdiis=bool(data.get("enable_gdiis", True)),
         processors=int(data.get("processors", 1)),
         memory_gb=None if data.get("memory_gb") is None else int(data.get("memory_gb")),
     )
@@ -480,13 +516,15 @@ def _write_smiles_xyzin(
         charge=charge,
         multiplicity=multiplicity,
         random_seed=random_seed,
+        relaxation_method="NONE",
     )
     lines = geometry.xyz_lines()
     lines.extend(
         [
             "#SMILES",
             f"VALUE {smiles}",
-            f"RDKIT_RANDOM_SEED {random_seed}",
+            f"SWITCH_COMPATIBILITY_SEED {random_seed}",
+            "SWITCH_ROLE INITIAL_CARTESIAN_EMBEDDING_ONLY",
         ]
     )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -494,14 +532,39 @@ def _write_smiles_xyzin(
     return path
 
 
-def _write_sonic_xyzin(source: Path, target: Path) -> Path:
+def _write_sonic_xyzin(
+    source: Path,
+    target: Path,
+    *,
+    source_kind: str = "enriched_xyz",
+    build_sonic: bool = True,
+) -> Path:
     from matrix_chem import preprocess_to_enriched_xyz, write_validation_section
     from matrix_smith import write_gicforge_build_sections
 
-    preprocess_to_enriched_xyz(source, target, source_kind="enriched_xyz")
+    preprocess_to_enriched_xyz(source, target, source_kind=source_kind)
     write_validation_section(target)
-    write_gicforge_build_sections(target, symmetrize=True)
+    if build_sonic:
+        write_gicforge_build_sections(target, symmetrize=True)
     return target
+
+
+def _refresh_sonic_contract(path: Path) -> None:
+    """Rebuild the complete ORACLE state, then freeze a new SONIC definition."""
+    from matrix_oracle import analyze_structure
+    from matrix_smith import write_gicforge_build_sections
+
+    target = Path(path)
+    with TemporaryDirectory(prefix="matrix_oracle_refresh_", dir=target.parent) as directory:
+        source = Path(directory) / target.name
+        shutil.copy2(target, source)
+        analyze_structure(
+            source,
+            target,
+            source_kind="enriched_xyz",
+            validate=True,
+        )
+    write_gicforge_build_sections(target, symmetrize=True)
 
 
 def _safe_name(name: str) -> str:

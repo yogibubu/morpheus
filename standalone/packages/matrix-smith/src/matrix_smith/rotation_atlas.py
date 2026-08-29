@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from matrix_core import RotationChart
+from matrix_chem import RotationChart
 
 if TYPE_CHECKING:
-    from .definition import GICDefinition
+    from .models import GICDefinition
 
 
 @dataclass(frozen=True)
@@ -68,12 +68,76 @@ class FragmentRotationAtlas:
                 rows[indices, :] = chart.rows(rows[indices, :])
         return values, rows
 
+    def to_local_values(self, chart_values: np.ndarray) -> np.ndarray:
+        """Return values in the current local SO(3) charts.
+
+        Non-rotational coordinates are unchanged.  This is the inverse of
+        :meth:`transform` for coordinate values and is the canonical bridge
+        between LINK's continuous optimizer coordinates and a rigid-pose
+        realization based at ``reference_coordinates``.
+        """
+
+        values = np.asarray(chart_values, dtype=float).copy()
+        for group in self.groups:
+            indices = list(group.coordinate_indices)
+            chart = self._charts[group.key]
+            values[indices] = np.linalg.solve(
+                chart.tangent,
+                values[indices] - chart.offset,
+            )
+        return values
+
+    def cartesian_columns_from_local(self, local_columns: np.ndarray) -> np.ndarray:
+        """Convert ``dx/d(local FROT)`` columns to ``dx/d(chart FROT)``.
+
+        A rebased rigid-pose model differentiates with respect to its local
+        exponential map.  LINK stores gradients and Hessians in the continuous
+        chart coordinates, so the inverse chart tangent must be applied to the
+        corresponding Cartesian-Jacobian columns.
+        """
+
+        columns = np.asarray(local_columns, dtype=float).copy()
+        if columns.ndim != 2:
+            raise ValueError("local Cartesian columns must be a matrix")
+        for group in self.groups:
+            indices = list(group.coordinate_indices)
+            if max(indices) >= columns.shape[1]:
+                raise ValueError("rotation coordinate index exceeds Cartesian-column matrix")
+            chart = self._charts[group.key]
+            columns[:, indices] = columns[:, indices] @ np.linalg.inv(chart.tangent)
+        return columns
+
     def max_local_norm(self, local_values: np.ndarray) -> float:
         values = np.asarray(local_values, dtype=float)
         return max(
-            (float(np.linalg.norm(values[list(group.coordinate_indices)])) for group in self.groups),
+            (
+                float(np.linalg.norm(values[list(group.coordinate_indices)]))
+                for group in self.groups
+            ),
             default=0.0,
         )
+
+    def transform_subset(
+        self,
+        coordinate_indices: tuple[int, ...],
+        local_values: np.ndarray,
+        local_rows: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray | None]:
+        """Transform complete FROT triplets contained in a coordinate subset."""
+
+        indices = tuple(int(index) for index in coordinate_indices)
+        positions = {index: position for position, index in enumerate(indices)}
+        values = np.asarray(local_values, dtype=float).reshape(len(indices)).copy()
+        rows = None if local_rows is None else np.asarray(local_rows, dtype=float).copy()
+        for group in self.groups:
+            if not all(index in positions for index in group.coordinate_indices):
+                continue
+            local_positions = [positions[index] for index in group.coordinate_indices]
+            chart = self._charts[group.key]
+            values[local_positions] = chart.value(values[local_positions])
+            if rows is not None:
+                rows[local_positions, :] = chart.rows(rows[local_positions, :])
+        return values, rows
 
     def rebase(self, local_values: np.ndarray, coordinates_angstrom: np.ndarray) -> None:
         values = np.asarray(local_values, dtype=float)

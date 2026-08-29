@@ -1,4 +1,4 @@
-import io, base64, math
+import math
 import numpy as np, pandas as pd, matplotlib.pyplot as plt
 
 from sympy.physics.wigner import wigner_3j, wigner_6j
@@ -13,7 +13,7 @@ from functools import lru_cache
 # SPCAT/SPFIT raw-card semantics used for prediction and fitting.
 
 try:
-    from matrix_core import eigh_arrays as _matrix_eigh_arrays
+    from matrix_numerics import eigh_arrays as _matrix_eigh_arrays
 
 except Exception:
     _matrix_eigh_arrays = None
@@ -1483,8 +1483,6 @@ def _simulate_simple_from_cache(structure, T, mu_a, mu_b, mu_c, intensity_cut):
     J_values = _sorted_level_js(levels)
     if not J_values:
         return pd.DataFrame(columns=['Frequency (MHz)', 'Intensity', 'Relative intensity', 'LGINT', 'logS', '...'])
-    J_max = max(J_values)
-
     ee_wt = float(globals().get("eeWt", 1.0))
     eo_wt = float(globals().get("eoWt", 1.0))
     oe_wt = float(globals().get("oeWt", 1.0))
@@ -2574,8 +2572,6 @@ def build_and_diag_HF_fullF(
                 chi_dict = {q: rot_scale * value for q, value in chi_dict.items()}
             if all(abs(v) < 1e-15 for v in chi_dict.values()):
                 continue
-            I_self = float(nucleus["I"])
-            I_other = _other_spin_for_nucleus(nuclei, nucleus["index"])
             active_position = 1
             if len(nuclei) >= 2:
                 # The exact direct-F recoupling uses the opposite spin-slot
@@ -3250,12 +3246,10 @@ def _simulate_asymmetric_from_cache(
     levels = structure["levels"]
     eigs = structure["eigs"]
     rep_int = structure["rep_int"]
-    rep_user = _normalize_rep_key(structure.get("rep_user", rep_int))
     use_hfs = bool(structure["use_hfs"])
     hfF_blocks = structure["hfF_blocks"]
     hfF_labels = structure["hfF_labels"]
     basis_by_F = structure["basis_by_F"]
-    groups_by_F = structure.get("groups_by_F", {})
     nuclei = list(structure.get("nuclei", []))
     mu_cache = structure.setdefault("mu_tau_cache", {})
     mu_wang_cache = structure.setdefault("mu_wang_cache", {})
@@ -3272,8 +3266,6 @@ def _simulate_asymmetric_from_cache(
     use_freq_scaled_hfs_threshold = (rotor_type_meta == "asymmetric")
     J_visible_max = int(structure.get("J_max", max(J_values)))
     J_values_visible = [J for J in J_values if int(J) <= J_visible_max]
-    J_max = max(J_values)
-
     Qrs = _compute_Qrs(levels, T)
 
     zero = 1.5e-38

@@ -2,8 +2,8 @@
 Topology validator for ORACLE.
 
 Guarantees:
-- All hydrogens are bound exactly once
-- No isolated atoms
+- Hydrogens have at most one ordinary constitutional bond
+- No isolated non-hydrogen atoms
 """
 
 
@@ -14,7 +14,7 @@ def validate_topology(dg):
         deg = len(dg.adjacency[i])
 
         if Z == 1:
-            if deg != 1:
+            if deg not in {0, 1}:
                 errors.append(f"Hydrogen {i} has degree {deg}")
         else:
             if deg == 0:

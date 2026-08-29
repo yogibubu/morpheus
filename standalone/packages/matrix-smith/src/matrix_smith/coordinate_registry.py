@@ -3,8 +3,32 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
+from matrix_chem import coordinate_capability
+
 
 COMMUTATIVE_FUNCTIONS = {"SUM", "PRODUCT"}
+FRAGMENT_BODY_PAIR_FUNCTIONS = frozenset({"FC_DIST", "FTRANS", "FLIN_TRANS", "FAXIS", "FROT"})
+FRAGMENT_BODY_SINGLE_FUNCTIONS = frozenset({"FCA_DIST"})
+MODE_BEARING_PRIMITIVE_FUNCTIONS = frozenset({"L", "FTRANS", "FLIN_TRANS", "FAXIS", "FROT"})
+GAUSSIAN_PRIMITIVE_LOWERINGS = {
+    "FROT": "REFERENCE_RELATIVE_QUATERNION_STEREOGRAPHIC_4K_OVER_1_PLUS_KW",
+}
+
+
+def gaussian_primitive_lowering(operator: str) -> str:
+    """Return the registered ReadAllGIC realization of a SMITH primitive.
+
+    The registry keeps backend algebra separate from both scientific primitive
+    selection and the serializer that emits it.  Missing entries are explicit:
+    a non-native primitive must never acquire an implicit writer-side lowering.
+    """
+
+    normalized = _canonical_operator(operator)
+    coordinate_capability(normalized, layer="PRIMITIVE")
+    try:
+        return GAUSSIAN_PRIMITIVE_LOWERINGS[normalized]
+    except KeyError as exc:
+        raise KeyError(f"no registered Gaussian lowering for primitive: {normalized}") from exc
 
 
 @dataclass(frozen=True, order=True)
@@ -31,9 +55,7 @@ class CoordinateSignature:
             parts.append("args=(" + ",".join(argument.text() for argument in self.arguments) + ")")
         if self.parameters:
             parts.append(
-                "params=("
-                + ",".join(f"{key}={value}" for key, value in self.parameters)
-                + ")"
+                "params=(" + ",".join(f"{key}={value}" for key, value in self.parameters) + ")"
             )
         return "|".join(parts)
 
@@ -138,7 +160,8 @@ def primitive_signature(
     mode: int = 0,
     ref_atoms: Iterable[int] = (),
 ) -> CoordinateSignature:
-    op = str(operator).strip().upper()
+    op = _canonical_operator(operator)
+    coordinate_capability(op, layer="PRIMITIVE")
     normalized_atoms = _canonical_atoms(op, tuple(int(atom) for atom in atoms))
     normalized_refs = tuple(int(atom) for atom in ref_atoms)
     if op in {"FC_DIST"}:
@@ -163,6 +186,7 @@ def function_signature(
     parameters: Mapping[str, Any] | Iterable[tuple[str, Any]] = (),
 ) -> CoordinateSignature:
     op = str(operator).strip().upper()
+    coordinate_capability(op, layer="FUNCTION")
     args = tuple(arguments)
     if op in COMMUTATIVE_FUNCTIONS:
         args = tuple(sorted(args))
@@ -186,6 +210,16 @@ def _canonical_atoms(operator: str, atoms: tuple[int, ...]) -> tuple[int, ...]:
         reversed_atoms = tuple(reversed(atoms))
         return min(atoms, reversed_atoms)
     return atoms
+
+
+def _canonical_operator(operator: str) -> str:
+    normalized = str(operator).strip().upper()
+    return {
+        "DISTANCE": "R",
+        "HBOND_DISTANCE": "R",
+        "ANGLE": "A",
+        "DIHEDRAL": "D",
+    }.get(normalized, normalized)
 
 
 def _canonical_parameters(

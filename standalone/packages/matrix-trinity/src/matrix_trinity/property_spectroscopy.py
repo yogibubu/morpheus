@@ -1,7 +1,7 @@
-"""TRINITY spectroscopy from ARCHITECT property surfaces.
+"""TRINITY spectroscopy from backend-neutral property surfaces.
 
 The Gaussian adapter is deliberately confined to the ingestion helper.  The
-actual intensity contraction consumes only an ARCHITECT surface, so the same
+actual intensity contraction consumes only a generic fitted surface, so the same
 path can be used with properties acquired from any MATRIX electronic backend.
 """
 
@@ -25,7 +25,7 @@ GAUSSIAN_IR_CONVERSION_KM_MOL = 974.8802
 
 @dataclass(frozen=True)
 class TrinityIRIntensityResult:
-    """Harmonic IR intensities and the ARCHITECT surface used to obtain them."""
+    """Harmonic IR intensities and the property surface used to obtain them."""
 
     frequencies_cm1: np.ndarray
     normal_derivatives_au: np.ndarray
@@ -93,13 +93,13 @@ def dipole_surface_and_ir_from_gaussian_fchk(
     Gaussian FCHK Cartesian derivatives are transformed to mass-normalized
     harmonic coordinates.  Symmetry-forbidden equilibrium components and
     derivatives are promoted from small numerical values to exact zero
-    constraints before ARCHITECT performs the common-basis SVD fit.
+    constraints before the backend-neutral common-basis SVD fit.
     """
 
-    from matrix_architect import (
-        ArchitectPropertyComponent,
-        ArchitectPropertySurfaceProblem,
-        fit_architect_property_surface,
+    from matrix_qm import (
+        PropertyComponent,
+        PropertySurfaceProblem,
+        fit_property_surface,
     )
     from matrix_gaussian import read_gaussian_fchk
 
@@ -157,7 +157,7 @@ def dipole_surface_and_ir_from_gaussian_fchk(
                 fixed[mode_label] = 0.0
         exact_zero_count += len(fixed)
         components.append(
-            ArchitectPropertyComponent(
+            PropertyComponent(
                 label=component_label,
                 observations=observations[component_index],
                 units="atomic_unit_dipole",
@@ -165,7 +165,7 @@ def dipole_surface_and_ir_from_gaussian_fchk(
                 metadata={"exact_zero_source": "point-group numerical projection"},
             )
         )
-    problem = ArchitectPropertySurfaceProblem(
+    problem = PropertySurfaceProblem(
         property_name="dipole_moment",
         representation="mass_normalized_harmonic_coordinates",
         basis_labels=basis_labels,
@@ -180,7 +180,7 @@ def dipole_surface_and_ir_from_gaussian_fchk(
             "exact_symmetry_zero_count": exact_zero_count,
         },
     )
-    surface = fit_architect_property_surface(problem)
+    surface = fit_property_surface(problem)
     fitted_derivatives, intensities = harmonic_ir_intensities_from_property_surface(
         surface, mode_labels
     )

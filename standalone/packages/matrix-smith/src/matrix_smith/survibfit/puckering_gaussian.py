@@ -12,8 +12,8 @@ from .modify_geom import read_xyz
 
 DEFAULT_GAUSSIAN_ROUTE = (
     "#p b3lyp/def2tzvp empiricaldispersion=gd3bj "
-    "opt=(addgic,calcfc,noeigentest,maxcycles=200) "
-    "int=ultrafine scf=(xqc,tight) nosymm output=pickett"
+    "opt=(addgic,calchffc,noeigentest,maxcycles=200) "
+    "int=ultrafine scf=xqc output=pickett"
 )
 
 

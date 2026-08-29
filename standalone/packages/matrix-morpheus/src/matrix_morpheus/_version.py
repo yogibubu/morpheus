@@ -1,3 +1,6 @@
-"""Single source of truth for the MORPHEUS distribution version."""
+"""MATRIX-wide version exposed by the MORPHEUS distribution."""
 
-__version__ = "0.1.0rc6"
+from matrix_core.version import MATRIX_VERSION
+
+
+__version__ = MATRIX_VERSION

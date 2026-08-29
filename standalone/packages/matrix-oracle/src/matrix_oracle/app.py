@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from matrix_core.online_help import online_help_text
+from matrix_core import load_environment
 
 from .commands import OracleGuiCommand
 from .contracts import (
@@ -1263,7 +1264,16 @@ def _run_qt(initial_xyzin: Path | None) -> int:
             remote_input_browse.clicked.connect(self.browse_qm_remote_input)
             self.qm_remote_engine = QComboBox()
             self.qm_remote_engine.addItems(("gdv32", "g16", "molpro", "orca"))
-            self.qm_remote_host = QLineEdit("oracle")
+            self.qm_remote_host = QComboBox()
+            try:
+                remote_names = tuple(
+                    machine.name
+                    for machine in load_environment(missing_ok=True).remote_machines
+                    if machine.enabled
+                )
+            except (OSError, ValueError):
+                remote_names = ()
+            self.qm_remote_host.addItems(remote_names)
             self.qm_remote_job = QLineEdit()
             self.qm_remote_job.setPlaceholderText("job id")
             self.qm_remote_destination = QLineEdit("remote_qm_runs")
@@ -1645,7 +1655,7 @@ def _run_qt(initial_xyzin: Path | None) -> int:
             command = self.qm_jobs_controller.remote_submit_command(
                 input_path,
                 engine=self.qm_remote_engine.currentText(),
-                host=self.qm_remote_host.text().strip() or "oracle",
+                host=self.qm_remote_host.currentText().strip(),
             )
             self._start_command(command, command.label)
 
@@ -1653,7 +1663,7 @@ def _run_qt(initial_xyzin: Path | None) -> int:
             if not self._ensure_qm_idle("Remote QM status"):
                 return
             command = self.qm_jobs_controller.remote_status_command(
-                host=self.qm_remote_host.text().strip() or "oracle"
+                host=self.qm_remote_host.currentText().strip()
             )
             self._start_command(command, command.label)
 
@@ -1673,7 +1683,7 @@ def _run_qt(initial_xyzin: Path | None) -> int:
                 return
             command = self.qm_jobs_controller.remote_fetch_command(
                 job,
-                host=self.qm_remote_host.text().strip() or "oracle",
+                host=self.qm_remote_host.currentText().strip(),
                 destination=self.qm_remote_destination.text().strip() or "remote_qm_runs",
                 promote=promote,
                 xyzin=target_xyzin,

@@ -14,6 +14,7 @@ from typing import Iterable, Sequence
 
 import numpy as np
 
+from .spatial_regions import SpatialRegions
 
 BOHR_TO_ANGSTROM = 0.529177210903
 CV_RADIAL_SIGMA_SCALE = 1.3
@@ -118,6 +119,224 @@ class HydrogenBondContact:
     coordination_weight: float
     intramolecular: bool
     pl1_calibrated: bool
+
+
+def perceive_proton_transfer_bridges(
+    atomic_numbers: Sequence[int],
+    coordinates_angstrom: np.ndarray,
+    bonded_pairs: Iterable[tuple[int, int]],
+    *,
+    distance_tolerance_angstrom: float = 0.15,
+    relative_tolerance: float = 0.10,
+    minimum_angle_degrees: float = 140.0,
+    minimum_structural_bridge_angle_degrees: float = 60.0,
+    covalent_extension_angstrom: float = 0.60,
+) -> tuple[tuple[int, int, int], ...]:
+    """Identify hydrogens shared by two equivalent heavy-atom neighbours.
+
+    Indices are zero based and records are ``(hydrogen, left, right)``.  This
+    is a distinct structural motif rather than an ordinary hydrogen bond.
+    Electronegative lone-pair centers use the near-linear proton-transfer
+    geometry. Electron-deficient group-13 hydride bridges use periodic-group
+    metadata, admit bent X--H--X' domains, and do not require equivalent
+    centers or equal raw distances. Candidate neighbours are limited by the
+    existing element-specific covalent radii plus one common extension. The
+    structural-bridge angle threshold is common to the complete family.
+    """
+
+    numbers = tuple(int(value) for value in atomic_numbers)
+    xyz = np.asarray(coordinates_angstrom, dtype=float)
+    if xyz.shape != (len(numbers), 3) or np.any(~np.isfinite(xyz)):
+        raise ValueError("proton-transfer coordinates must have shape (natoms, 3)")
+    if distance_tolerance_angstrom <= 0.0 or relative_tolerance <= 0.0:
+        raise ValueError("proton-transfer distance tolerances must be positive")
+    if not 0.0 < minimum_angle_degrees <= 180.0:
+        raise ValueError("proton-transfer angle threshold is invalid")
+    if not 0.0 < minimum_structural_bridge_angle_degrees <= 180.0:
+        raise ValueError("structural-bridge angle threshold is invalid")
+    if covalent_extension_angstrom <= 0.0:
+        raise ValueError("shared-hydrogen covalent extension must be positive")
+    bonds = {tuple(sorted((int(left), int(right)))) for left, right in bonded_pairs}
+    adjacency = [set() for _ in numbers]
+    for left, right in bonds:
+        if left == right or min(left, right) < 0 or max(left, right) >= len(numbers):
+            raise ValueError(f"invalid proton-transfer bond: {(left, right)}")
+        adjacency[left].add(right)
+        adjacency[right].add(left)
+    from .topology.covalent_radii import covalent_radius
+
+    from .topology.bonding_roles import (
+        is_electron_deficient_center,
+        is_electronegative_lone_pair_donor,
+    )
+
+    def bridge_heavy(number: int) -> bool:
+        return is_electronegative_lone_pair_donor(
+            number
+        ) or is_electron_deficient_center(number)
+
+    hydrogen_radius = covalent_radius(1)
+    if hydrogen_radius is None:
+        raise RuntimeError("ORACLE covalent radius for hydrogen is unavailable")
+    result: list[tuple[int, int, int]] = []
+    for hydrogen, number in enumerate(numbers):
+        if number != 1:
+            continue
+        if any(not bridge_heavy(numbers[atom]) for atom in adjacency[hydrogen]):
+            continue
+        candidates: list[tuple[float, int]] = []
+        for atom, atom_number in enumerate(numbers):
+            if atom == hydrogen or not bridge_heavy(atom_number):
+                continue
+            heavy_radius = covalent_radius(atom_number)
+            if heavy_radius is None:
+                continue
+            cutoff = float(hydrogen_radius + heavy_radius + covalent_extension_angstrom)
+            distance = float(np.linalg.norm(xyz[atom] - xyz[hydrogen]))
+            if distance <= 1.0e-12 or distance > cutoff:
+                continue
+            candidates.append((distance, atom))
+        candidates.sort()
+        if len(candidates) < 2:
+            continue
+        (left_distance, left), (right_distance, right) = candidates[:2]
+        endpoint_numbers = (numbers[left], numbers[right])
+        proton_domain = all(
+            is_electronegative_lone_pair_donor(number)
+            for number in endpoint_numbers
+        )
+        electron_deficient_domain = all(
+            is_electron_deficient_center(number) for number in endpoint_numbers
+        )
+        if not proton_domain and not electron_deficient_domain:
+            continue
+        if proton_domain:
+            tolerance = max(
+                float(distance_tolerance_angstrom),
+                float(relative_tolerance) * min(left_distance, right_distance),
+            )
+            if abs(left_distance - right_distance) > tolerance:
+                continue
+        left_vector = xyz[left] - xyz[hydrogen]
+        right_vector = xyz[right] - xyz[hydrogen]
+        denominator = float(np.linalg.norm(left_vector) * np.linalg.norm(right_vector))
+        if denominator <= 1.0e-12:
+            continue
+        angle = float(
+            np.degrees(
+                np.arccos(
+                    np.clip(np.dot(left_vector, right_vector) / denominator, -1.0, 1.0)
+                )
+            )
+        )
+        required_angle = (
+            minimum_structural_bridge_angle_degrees
+            if electron_deficient_domain
+            else minimum_angle_degrees
+        )
+        if angle < required_angle:
+            continue
+        result.append((hydrogen, min(left, right), max(left, right)))
+    return tuple(result)
+
+
+@dataclass(frozen=True)
+class HydrogenBondRecognitionPlan:
+    """Immutable H-bond chemistry compiled once for repeated evaluations."""
+
+    atomic_numbers: tuple[int, ...]
+    bonded_pairs: tuple[tuple[int, int], ...]
+    adjacency: tuple[frozenset[int], ...]
+    donor_hydrogens: tuple[tuple[int, int], ...]
+    acceptors: tuple[int, ...]
+    component_by_atom: tuple[int, ...]
+    cutoff_angstrom: float
+    selector_threshold: float
+    minimum_angle_radians: float
+
+    def new_pair_list(self, *, skin_angstrom: float = 0.5) -> "HydrogenBondPairList":
+        return HydrogenBondPairList(self, skin_angstrom=skin_angstrom)
+
+
+@dataclass
+class HydrogenBondPairList:
+    """Reusable H...A neighbor list for MC, MD, GA and geometry workflows."""
+
+    plan: HydrogenBondRecognitionPlan
+    skin_angstrom: float = 0.5
+    reference_coordinates_angstrom: np.ndarray | None = None
+    acceptors_by_hydrogen: dict[int, tuple[int, ...]] | None = None
+    rebuild_count: int = 0
+
+    def __post_init__(self) -> None:
+        if not np.isfinite(self.skin_angstrom) or self.skin_angstrom < 0.0:
+            raise ValueError("hydrogen-bond pair-list skin must be finite and nonnegative")
+
+    def perceive(self, coordinates_angstrom: np.ndarray) -> tuple[HydrogenBondContact, ...]:
+        xyz = np.asarray(coordinates_angstrom, dtype=float)
+        if xyz.shape != (len(self.plan.atomic_numbers), 3):
+            raise ValueError(
+                "hydrogen-bond runtime coordinates must have shape (natoms, 3)"
+            )
+        if np.any(~np.isfinite(xyz)):
+            raise ValueError("hydrogen-bond runtime coordinates must be finite")
+        rebuild = self.reference_coordinates_angstrom is None
+        if not rebuild and self.skin_angstrom > 0.0:
+            displacement = np.linalg.norm(
+                xyz - self.reference_coordinates_angstrom,
+                axis=1,
+            )
+            rebuild = float(np.max(displacement, initial=0.0)) > 0.5 * self.skin_angstrom
+        if rebuild or self.acceptors_by_hydrogen is None:
+            self.acceptors_by_hydrogen = _hydrogen_bond_candidate_pairs(
+                self.plan,
+                xyz,
+                extra_cutoff=self.skin_angstrom,
+            )
+            self.reference_coordinates_angstrom = xyz.copy()
+            self.rebuild_count += 1
+        contacts = _evaluate_hydrogen_bond_candidates(
+            self.plan,
+            xyz,
+            self.acceptors_by_hydrogen,
+        )
+        central = perceive_proton_transfer_bridges(
+            self.plan.atomic_numbers,
+            xyz,
+            self.plan.bonded_pairs,
+        )
+        if not central:
+            return contacts
+        result = list(contacts)
+        for hydrogen, left, right in central:
+            vector_left = xyz[left] - xyz[hydrogen]
+            vector_right = xyz[right] - xyz[hydrogen]
+            angle = float(
+                np.arccos(
+                    np.clip(
+                        np.dot(vector_left, vector_right)
+                        / (np.linalg.norm(vector_left) * np.linalg.norm(vector_right)),
+                        -1.0,
+                        1.0,
+                    )
+                )
+            )
+            result.append(
+                HydrogenBondContact(
+                    donor=left,
+                    hydrogen=hydrogen,
+                    acceptor=right,
+                    distance_angstrom=float(np.linalg.norm(vector_right)),
+                    angle_radians=angle,
+                    coordination_weight=1.0,
+                    intramolecular=(
+                        self.plan.component_by_atom[left]
+                        == self.plan.component_by_atom[right]
+                    ),
+                    pl1_calibrated=False,
+                )
+            )
+        return tuple(result)
 
 
 @dataclass(frozen=True)
@@ -273,45 +492,219 @@ def perceive_hydrogen_bonds(
     *,
     selector_threshold: float = 1.0e-3,
     minimum_angle_degrees: float = 110.0,
+    donor_hydrogens: Iterable[tuple[int, int]] | None = None,
+    acceptor_atoms: Iterable[int] | None = None,
 ) -> tuple[HydrogenBondContact, ...]:
-    """Perceive continuous X--H...A contacts for ORACLE pseudo-bonds.
+    """Perceive continuous X--H...A contacts through the shared MATRIX kernel.
 
-    The general perception accepts N/O/P/S donors and acceptors as specified in
-    JCP_IS1.  ``pl1_calibrated`` is deliberately narrower: the current PL1
-    parameters are valid only for O--H...O--H contacts.
+    General perception accepts electronegative lone-pair families as donors
+    and acceptors. ``pl1_calibrated`` is deliberately narrower: the current
+    PL1 parameters are valid only for O--H...O--H contacts.
     """
+    plan = prepare_hydrogen_bond_recognition(
+        atomic_numbers,
+        bonded_pairs,
+        selector_threshold=selector_threshold,
+        minimum_angle_degrees=minimum_angle_degrees,
+        donor_hydrogens=donor_hydrogens,
+        acceptor_atoms=acceptor_atoms,
+    )
+    return plan.new_pair_list(skin_angstrom=0.0).perceive(coordinates_angstrom)
+
+
+def continuous_hydrogen_bond_coordination(
+    plan: HydrogenBondRecognitionPlan,
+    coordinates_angstrom: np.ndarray,
+    *,
+    intermolecular_only: bool = True,
+) -> float:
+    """Return the all-pair continuous effective number of hydrogen bonds.
+
+    Donor and acceptor identities come from one immutable component topology.
+    No distance, angle, or neighbour-list threshold changes the observable.
+    """
+
+    from .topology.vdw_radii import uff_vdw_radius
+
+    xyz = np.asarray(coordinates_angstrom, dtype=float)
+    if xyz.shape != (len(plan.atomic_numbers), 3) or np.any(~np.isfinite(xyz)):
+        raise ValueError("hydrogen-bond coordinates have an invalid shape")
+    total = 0.0
+    radius_h = uff_vdw_radius(1)
+    if radius_h is None:
+        return total
+    for donor, hydrogen in plan.donor_hydrogens:
+        donor_vector = xyz[donor] - xyz[hydrogen]
+        donor_norm = float(np.linalg.norm(donor_vector))
+        if donor_norm <= 1.0e-12:
+            continue
+        for acceptor in plan.acceptors:
+            if acceptor in {donor, hydrogen}:
+                continue
+            if (
+                intermolecular_only
+                and plan.component_by_atom[hydrogen]
+                == plan.component_by_atom[acceptor]
+            ):
+                continue
+            radius_a = uff_vdw_radius(plan.atomic_numbers[acceptor])
+            if radius_a is None:
+                continue
+            acceptor_vector = xyz[acceptor] - xyz[hydrogen]
+            distance = float(np.linalg.norm(acceptor_vector))
+            if distance <= 1.0e-12:
+                continue
+            angle = float(
+                np.arccos(
+                    np.clip(
+                        np.dot(donor_vector, acceptor_vector)
+                        / (donor_norm * distance),
+                        -1.0,
+                        1.0,
+                    )
+                )
+            )
+            total += coordination_switch(
+                distance,
+                float(radius_h + radius_a),
+                1.0,
+                PL1_PAIR_SWITCH_SIGMA_ANGSTROM,
+            ) * hbond_angular_factor(angle)
+    return float(total)
+
+
+def prepare_hydrogen_bond_recognition(
+    atomic_numbers: Sequence[int],
+    bonded_pairs: Iterable[tuple[int, int]],
+    *,
+    selector_threshold: float = 1.0e-3,
+    minimum_angle_degrees: float = 110.0,
+    donor_hydrogens: Iterable[tuple[int, int]] | None = None,
+    acceptor_atoms: Iterable[int] | None = None,
+) -> HydrogenBondRecognitionPlan:
+    """Compile invariant chemistry for a reusable, ORACLE-free runtime."""
+
     from .topology.vdw_radii import uff_vdw_radius
 
     numbers = tuple(int(value) for value in atomic_numbers)
-    xyz = np.asarray(coordinates_angstrom, dtype=float)
-    if xyz.shape != (len(numbers), 3):
-        raise ValueError("hydrogen-bond perception needs coordinates with shape (natoms, 3)")
     if not 0.0 <= selector_threshold <= 1.0:
         raise ValueError("hydrogen-bond selector threshold must lie between zero and one")
+    minimum_angle = float(minimum_angle_degrees)
+    if not np.isfinite(minimum_angle) or not 0.0 <= minimum_angle <= 180.0:
+        raise ValueError("minimum hydrogen-bond angle must lie between 0 and 180 degrees")
     bonds = {tuple(sorted((int(i), int(j)))) for i, j in bonded_pairs}
     adjacency = [set() for _ in numbers]
     for left, right in bonds:
+        if left == right or min(left, right) < 0 or max(left, right) >= len(numbers):
+            raise ValueError(f"invalid hydrogen-bond runtime bond: {(left, right)}")
         adjacency[left].add(right)
         adjacency[right].add(left)
     components = _connected_components(adjacency)
-    component_by_atom = {
+    component_lookup = {
         atom: component for component, atoms in enumerate(components) for atom in atoms
     }
-    eligible = {7, 8, 15, 16}
+    from .topology.bonding_roles import is_electronegative_lone_pair_donor
+
+    if acceptor_atoms is None:
+        acceptors = tuple(
+            atom
+            for atom, value in enumerate(numbers)
+            if is_electronegative_lone_pair_donor(value)
+        )
+    else:
+        acceptors = tuple(sorted({int(atom) for atom in acceptor_atoms}))
+        if any(atom < 0 or atom >= len(numbers) for atom in acceptors):
+            raise ValueError("hydrogen-bond acceptor site is outside the system")
+    if donor_hydrogens is None:
+        donors = tuple(
+            (next(iter(adjacency[hydrogen])), hydrogen)
+            for hydrogen, value in enumerate(numbers)
+            if value == 1
+            and len(adjacency[hydrogen]) == 1
+            and is_electronegative_lone_pair_donor(
+                numbers[next(iter(adjacency[hydrogen]))]
+            )
+        )
+    else:
+        donors = tuple(
+            sorted({(int(donor), int(hydrogen)) for donor, hydrogen in donor_hydrogens})
+        )
+        for donor, hydrogen in donors:
+            if (
+                min(donor, hydrogen) < 0
+                or max(donor, hydrogen) >= len(numbers)
+                or numbers[hydrogen] != 1
+                or tuple(sorted((donor, hydrogen))) not in bonds
+            ):
+                raise ValueError(
+                    f"invalid configured hydrogen-bond donor site: {(donor, hydrogen)}"
+                )
+    radius_h = uff_vdw_radius(1)
+    acceptor_numbers = tuple(numbers[atom] for atom in acceptors)
+    maximum_acceptor_radius = max(
+        (
+            float(radius)
+            for radius in (uff_vdw_radius(value) for value in acceptor_numbers)
+            if radius is not None
+        ),
+        default=2.1,
+    )
+    hbond_cutoff = float(radius_h or 1.5) + maximum_acceptor_radius + 0.5
+    return HydrogenBondRecognitionPlan(
+        atomic_numbers=numbers,
+        bonded_pairs=tuple(sorted(bonds)),
+        adjacency=tuple(frozenset(items) for items in adjacency),
+        donor_hydrogens=donors,
+        acceptors=acceptors,
+        component_by_atom=tuple(component_lookup[index] for index in range(len(numbers))),
+        cutoff_angstrom=hbond_cutoff,
+        selector_threshold=float(selector_threshold),
+        minimum_angle_radians=float(np.deg2rad(minimum_angle)),
+    )
+
+
+def _hydrogen_bond_candidate_pairs(
+    plan: HydrogenBondRecognitionPlan,
+    xyz: np.ndarray,
+    *,
+    extra_cutoff: float,
+) -> dict[int, tuple[int, ...]]:
+    cutoff = plan.cutoff_angstrom + float(extra_cutoff)
+    regions = SpatialRegions.build(xyz, cell_size=cutoff)
+    eligible_acceptors = set(plan.acceptors)
+    acceptors_by_hydrogen: dict[int, list[int]] = {}
+    donor_hydrogens = {hydrogen for _donor, hydrogen in plan.donor_hydrogens}
+    for left, right in regions.candidate_pairs(cutoff):
+        if left in donor_hydrogens and right in eligible_acceptors:
+            acceptors_by_hydrogen.setdefault(left, []).append(right)
+        if right in donor_hydrogens and left in eligible_acceptors:
+            acceptors_by_hydrogen.setdefault(right, []).append(left)
+    return {
+        hydrogen: tuple(sorted(acceptors))
+        for hydrogen, acceptors in acceptors_by_hydrogen.items()
+    }
+
+
+def _evaluate_hydrogen_bond_candidates(
+    plan: HydrogenBondRecognitionPlan,
+    xyz: np.ndarray,
+    acceptors_by_hydrogen: dict[int, tuple[int, ...]],
+) -> tuple[HydrogenBondContact, ...]:
+    from .topology.vdw_radii import uff_vdw_radius
+
+    numbers = plan.atomic_numbers
+    adjacency = plan.adjacency
+    bonds = set(plan.bonded_pairs)
+    radius_h = uff_vdw_radius(1)
     contacts: list[HydrogenBondContact] = []
-    for hydrogen, z_h in enumerate(numbers):
-        if z_h != 1 or len(adjacency[hydrogen]) != 1:
-            continue
-        donor = next(iter(adjacency[hydrogen]))
-        if numbers[donor] not in eligible:
-            continue
+    for donor, hydrogen in plan.donor_hydrogens:
         dh = xyz[donor] - xyz[hydrogen]
-        for acceptor, z_acceptor in enumerate(numbers):
-            if acceptor in {hydrogen, donor} or z_acceptor not in eligible:
+        for acceptor in sorted(acceptors_by_hydrogen.get(hydrogen, ())):
+            z_acceptor = numbers[acceptor]
+            if acceptor in {hydrogen, donor}:
                 continue
             if tuple(sorted((hydrogen, acceptor))) in bonds:
                 continue
-            radius_h = uff_vdw_radius(1)
             radius_a = uff_vdw_radius(z_acceptor)
             if radius_h is None or radius_a is None:
                 continue
@@ -321,15 +714,15 @@ def perceive_hydrogen_bonds(
             weight = coordination_switch(
                 distance, reference, 1.0, PL1_PAIR_SWITCH_SIGMA_ANGSTROM
             )
-            if weight < selector_threshold:
+            if weight < plan.selector_threshold:
                 continue
             denominator = float(np.linalg.norm(dh) * np.linalg.norm(ha))
             if denominator <= 1.0e-12:
                 continue
             angle = float(np.arccos(np.clip(np.dot(dh, ha) / denominator, -1.0, 1.0)))
-            if angle < np.deg2rad(float(minimum_angle_degrees)):
+            if angle < plan.minimum_angle_radians:
                 continue
-            if hbond_angular_factor(angle) < selector_threshold:
+            if hbond_angular_factor(angle) < plan.selector_threshold:
                 continue
             acceptor_bears_hydrogen = any(numbers[item] == 1 for item in adjacency[acceptor])
             contacts.append(
@@ -340,7 +733,10 @@ def perceive_hydrogen_bonds(
                     distance_angstrom=distance,
                     angle_radians=angle,
                     coordination_weight=weight,
-                    intramolecular=component_by_atom[hydrogen] == component_by_atom[acceptor],
+                    intramolecular=(
+                        plan.component_by_atom[hydrogen]
+                        == plan.component_by_atom[acceptor]
+                    ),
                     pl1_calibrated=(
                         numbers[donor] == 8
                         and numbers[acceptor] == 8
@@ -372,18 +768,27 @@ def pseudo_bond_pairs(
         adjacency[left].add(right)
         adjacency[right].add(left)
     components = _connected_components(adjacency)
-    if len(components) <= 1:
-        return tuple(
-            ((contact.hydrogen, contact.acceptor), "INTRAMOLECULAR_HBOND")
-            for contact in perceive_hydrogen_bonds(
-                numbers, xyz, bonds, selector_threshold=selector_threshold
-            )
-            if contact.intramolecular
+    central_bridges = tuple(
+        (pair, kind)
+        for hydrogen, left, right in perceive_proton_transfer_bridges(
+            numbers, xyz, bonds
         )
+        for kind in (
+            (
+                "INTRAMOLECULAR_BORANE_BRIDGE"
+                if 5 in {numbers[left], numbers[right]}
+                else "INTRAMOLECULAR_PROTON_BRIDGE"
+            ),
+        )
+        for pair in (tuple(sorted((hydrogen, left))), tuple(sorted((hydrogen, right))))
+        if pair not in bonds
+    )
+    if len(components) <= 1:
+        return central_bridges
     component_by_atom = {
         atom: component for component, atoms in enumerate(components) for atom in atoms
     }
-    selected: list[tuple[tuple[int, int], str]] = []
+    selected: list[tuple[tuple[int, int], str]] = list(central_bridges)
     parent = list(range(len(components)))
 
     def find(index: int) -> int:
@@ -392,10 +797,21 @@ def pseudo_bond_pairs(
             index = parent[index]
         return index
 
+    for (atom_left, atom_right), _kind in central_bridges:
+        left_component = component_by_atom[atom_left]
+        right_component = component_by_atom[atom_right]
+        root_left, root_right = find(left_component), find(right_component)
+        if root_left != root_right:
+            parent[root_right] = root_left
+
     for contact in perceive_hydrogen_bonds(
         numbers, xyz, bonds, selector_threshold=selector_threshold
     ):
+        if contact.intramolecular:
+            continue
         pair = tuple(sorted((contact.hydrogen, contact.acceptor)))
+        if pair in {item[0] for item in central_bridges}:
+            continue
         selected.append(
             (pair, "INTRAMOLECULAR_HBOND" if contact.intramolecular else "INTERFRAGMENT_HBOND")
         )
