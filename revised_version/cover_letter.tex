@@ -3,6 +3,12 @@
 \usepackage[margin=1in]{geometry}
 \usepackage{hyperref}
 \emergencystretch=2em
+\hypersetup{
+  hidelinks,
+  pdftitle={Cover Letter - MORPHEUS manuscript},
+  pdfauthor={Vincenzo Barone},
+  pdfsubject={Submission to The Journal of Chemical Physics}
+}
 
 \signature{Vincenzo Barone}
 \address{Vincenzo Barone\\
@@ -19,42 +25,30 @@ The Journal of Chemical Physics}
 
 Please find enclosed the manuscript ``Algorithmic Construction and Exploitation
 of Topology-Constrained Refinement Models for Semiexperimental Equilibrium
-Structures,'' submitted for consideration as an Article in \emph{The Journal of
-Chemical Physics}.
+Structures,'' submitted as an Article to \emph{The Journal of Chemical
+Physics}.
 
-The manuscript introduces MORPHEUS, a framework that turns the formulation of
-semiexperimental refinement models into a reproducible topology-, symmetry-,
-and rank-audited procedure. Rather than assuming that the internal-coordinate
-model has already been selected by expert intervention, MORPHEUS uses
-SMITH-generated SONIC coordinate contracts, applies symmetry and homogeneous
-rank reduction, projects constraints and predicates consistently, and
-propagates uncertainties back to chemically interpretable structural
-parameters. When an internal-coordinate correction must be realized,
-MORPHEUS uses a rank-controlled minimum-norm or nonlinear
-internal-to-Cartesian realization, without introducing a second Wilson-B
-inversion algorithm.
+The manuscript introduces MORPHEUS, a framework that turns semiexperimental
+refinement-model formulation into a reproducible topology-, symmetry-, and
+rank-audited procedure. Starting from non-redundant SONIC coordinate contracts,
+MORPHEUS generates the supported active space, applies constraints, predicates,
+and parameter classes consistently, and propagates uncertainties to chemically
+interpretable structural parameters.
 
-The work is, in my view, well aligned with the scope of \emph{The Journal of
-Chemical Physics} because it addresses a general problem at the interface of
-rotational spectroscopy, molecular structure determination, and quantum
-chemistry: how to combine high-resolution experimental data, computed
-vibrational and electronic corrections, topology, symmetry, and external
-reference information in a controlled statistical model. The validation spans
-acyclic, cyclic, planar, fused, bridged, and flexible molecules. A
-large-molecule testosterone case study further shows that accurate quantum
-chemical equilibrium structures, accelerated vibrational corrections, and
-algorithmically generated topology-constrained refinement models can be chained
-for systems containing about 50 atoms, where conventional isotope-rich
-semiexperimental analyses are not currently practical.
+The work addresses a general problem at the interface of rotational
+spectroscopy, molecular structure determination, and quantum chemistry: how to
+combine precise experimental data, computed vibrational and electronic
+corrections, topology, symmetry, and external reference information in a
+controlled inverse model. Validation spans acyclic, cyclic, planar, fused,
+bridged, and flexible molecules. A 49-atom testosterone case further shows that
+accurate equilibrium geometries, accelerated vibrational corrections, and
+generated class-constrained refinement models can be chained when isotope-rich
+semiexperimental analyses are not practical.
 
-The manuscript also emphasizes reproducibility. The reported models are not
-defined by molecule-specific Z-matrix choices, but by explicit primitive
-relations, parameter classes, predicates, and audit trails. The submitted
-Supporting Information documents the benchmark inputs, diagnostics, and the
-large-molecule class/predicate variants used in the paper.
-
-The coordinate-generation layer used here is the subject of the companion
-SMITH/SONIC methodological preprint, publicly available as
+The source, runnable examples, benchmark outputs, and final-validation data are
+distributed with the public MORPHEUS 0.1.0rc8 release. The Supporting
+Information provides the numerical diagnostics and audit trails. The companion
+SMITH/SONIC coordinate methodology is available as
 \href{https://arxiv.org/abs/2607.16550}{arXiv:2607.16550}.
 
 This manuscript is original, has not been published previously, and is not

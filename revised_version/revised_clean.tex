@@ -9,6 +9,7 @@
 \usepackage{array}
 \usepackage{xcolor}
 \usepackage{tikz}
+\usepackage{hyperref}
 \usetikzlibrary{arrows.meta,backgrounds,fit,positioning}
 \definecolor{FrameworkBlue}{HTML}{245C73}
 \definecolor{FrameworkTeal}{HTML}{2F8F83}
@@ -17,6 +18,13 @@
 \definecolor{FrameworkInk}{HTML}{263238}
 \newcommand{\rev}[1]{#1}
 \emergencystretch=2em
+\hypersetup{
+  hidelinks,
+  pdftitle={Algorithmic Construction and Exploitation of Topology-Constrained Refinement Models for Semiexperimental Equilibrium Structures},
+  pdfauthor={Vincenzo Barone},
+  pdfsubject={Topology-, symmetry-, and rank-constrained semiexperimental structure refinement},
+  pdfkeywords={semiexperimental equilibrium structures, MORPHEUS, generalized internal coordinates, molecular symmetry, rotational spectroscopy}
+}
 
 \begin{document}
 
@@ -27,16 +35,7 @@
 \affiliation{INSTM, National Interuniversity Consortium for Materials Science and Technology, via G. Giusti 9, 50121 Firenze, Italy}
 
 \begin{abstract}
-
-Semiexperimental equilibrium structures combine high-resolution rotational spectroscopy with computed vibrational and electronic corrections. \rev{The numerical solution of a least-squares refinement is well established; a central challenge is often the earlier one, namely the construction and validation of the inverse model that connects precise observables with structural parameters.} Active coordinates, symmetry, weakly determined directions, constraints, predicates, and parameter classes are still frequently selected by expert intervention, especially for cyclic, fused, and bridged molecular graphs.
-
-This paper introduces \texttt{MORPHEUS} (Model Optimization and Refinement from Perceived Hierarchy, Equivalence, Uncertainty, and Symmetry), a framework that turns model formulation into a reproducible, auditable construction step constrained by symmetry and rank. The semiexperimental refinements reported here provide the principal validation, but the construction is more general: it builds constrained refinement models from topology, symmetry, rank, isotope coverage, and external reference information before any numerical least-squares solution is attempted. Molecular topology defines the primitive coordinate space, symmetry selects the admissible active subspace, isotopic coverage determines which directions are experimentally supported, and electronic-structure reference information enters only through explicit primitive-coordinate constraints, predicates, or parameter classes.
-
-\rev{In the complete workflow, different tools perceive the molecular topology
-and build non-redundant internal coordinates, which are used by MORPHEUS to
-perform the least-squares fitting.}
-
-Two equivalent active spaces are available: symmetry-adapted generalized internal coordinates built from homogeneous primitive families, and symmetry-adapted Cartesian displacements after removal of translations and rotations. The chemical interface remains internal-coordinate based, so bond, angle, dihedral, out-of-plane, ring, and local-frame relations have the same meaning whichever numerical basis is used. Validation on acyclic, cyclic, planar, fused, bridged, and flexible systems shows that rank, effective dimension, residuals, structural parameters, and propagated uncertainties are reproduced without manual coordinate-model formulation. In the norbornane-derived series, norcamphor probes a bridged reduced-dimensionality model and camphor adds methyl substitution as a stricter validation test: the accepted no-Kraitchman BDPCS3-predicate model gives sub-milliangstrom bond corrections, whereas superficially competitive variants based on unsupported hydrogen directions or tight Kraitchman predicates are rejected because they distort the geometry. The testosterone case study then shows that accurate quantum chemical equilibrium geometries, accelerated vibrational corrections, and generated topology-constrained refinement models can be chained for molecular systems containing about 50 atoms, where isotope-rich data sets required by conventional refinement strategies are generally unavailable.
+\rev{Semiexperimental equilibrium structures combine high-resolution rotational spectroscopy with computed vibrational and electronic corrections. Although the numerical least-squares solution is well established, constructing and validating the inverse model that connects observables to structural parameters often still requires expert choices of coordinates, symmetry, constraints, predicates, and parameter classes. We introduce \texttt{MORPHEUS} (Model Optimization and Refinement from Perceived Hierarchy, Equivalence, Uncertainty, and Symmetry), a framework that makes this formulation reproducible, auditable, and constrained by topology, symmetry, rank, isotope coverage, and explicit external reference information. Starting from Cartesian geometry, the workflow builds non-redundant internal coordinates and a refinement model before fitting. It offers two equivalent active spaces: symmetry-adapted generalized internal coordinates assembled from homogeneous primitive families and symmetry-adapted Cartesian displacements with translations and rotations removed. The chemical interface remains internal-coordinate based in both representations. Tests spanning acyclic, cyclic, planar, fused, bridged, and flexible molecules reproduce effective dimensions, residuals, structural parameters, and propagated uncertainties without manual coordinate-model construction. In camphor, the accepted no-Kraitchman model with BDPCS3-derived predicates yields sub-milliangstrom bond corrections and remains stable under coordinate-basis changes, robust losses, predicate-width scans, and multistarts, whereas numerically competitive alternatives are rejected because they distort the geometry. A 49-atom testosterone case further demonstrates that accurate equilibrium geometries, accelerated vibrational corrections, and generated class-constrained refinement models can be chained when isotope-rich data are unavailable. MORPHEUS therefore turns expert-dependent model formulation into an explicit, rank-tested, and reusable stage of semiexperimental structure determination.}
 
 \end{abstract}
 
@@ -95,9 +94,9 @@ Thus topology, symmetry operations, chemical descriptors, coordinate
 definitions, and derivative conventions are fixed once; \texttt{MORPHEUS} uses
 that contract without regenerating the model during refinement.
 The parameter classes introduced below are statistical equality or predicate
-relations for the semiexperimental inverse problem. They are distinct from
+relations for the semiexperimental inverse problem. \rev{They are distinct from
 force-field parameters and are used only to express equality, predicate, or
-reduced-dimensionality relations within the refinement model.
+reduced-dimensionality relations within the refinement model.}
 
 Recent workflows have extended semiexperimental refinement by combining
 computed starting geometries, quantum chemical (QC) vibrational corrections, and
@@ -207,7 +206,7 @@ basis used to solve the refinement.
 The coordinate construction starts from Cartesian geometry and perceived
 topology. ORACLE uses bonded pairs and ring connectivity to define the
 redundant primitive internal-coordinate (PIC) set and its Wilson matrix. The
-PIC set contains the following coordinate families: stretches, valence
+PIC set contains \rev{the following coordinate families:} stretches, valence
 angles, torsions, out-of-plane deformations,
 linear bends, and ring-specific primitives. Redundancy is intentional at this
 stage because it lets topology, not a manually chosen reference path, decide
@@ -363,12 +362,12 @@ between each retained coordinate and the chemical relation used for
 constraints, predicates, classes, and uncertainty propagation; only residual
 linear dependencies between already interpretable coordinates are removed in
 the final pruning step.
-MORPHEUS formulates corrections in the selected GIC space and realizes them in
+\rev{MORPHEUS formulates corrections in the selected GIC space and realizes them in
 Cartesian geometry through a rank-controlled minimum-norm or nonlinear
 back-transformation. It then evaluates the residuals and updates its
 refinement model from the realized geometry. The symmetry-Cartesian route uses
 the same selection, constraint projection, and covariance propagation, but
-needs no Wilson-B inversion.
+needs no Wilson-B inversion.}
 
 
 \subsection{Constraints, Predicates, and Parameter Classes}
@@ -1169,8 +1168,8 @@ rank 14, condition number 4.05, and a rotational RMS residual of 0.50~MHz. It
 recovers the published $r_e^\mathrm{SE}$ structure within 0.0015~\AA{} for the
 tabulated bond lengths and within 0.09$^\circ$ for the tabulated angles.
 
-The corresponding auxiliary-relation comparison is given in
-Table~\ref{tab:phthalic-predicates}.
+\rev{The corresponding auxiliary-relation comparison is given in
+Table~\ref{tab:phthalic-predicates}.}
 
 \begin{table*}[t]
 \caption{Effect of auxiliary model relations for phthalic anhydride. The
@@ -1356,9 +1355,9 @@ maximum absolute residual of 0.284~MHz. More importantly, the final structural
 correction to the BDPCS3 reference remains small on the chemically relevant
 scale: the largest bond-length shift is 0.832~m\AA{}, the largest
 valence-angle shift is $0.040^\circ$, and the corresponding propagated
-standard errors are bounded by 3.000~m\AA{} and $0.257^\circ$. The
+standard errors are bounded by 3.000~m\AA{} and $0.257^\circ$. \rev{The
 corresponding stability distributions are shown in
-Figure~\ref{fig:camphor-validation}.
+Figure~\ref{fig:camphor-validation}.}
 
 Camphor is deliberately used as the full validation stress test because it is
 the exposed full-rank member of the bridged series: the model retains all 75
@@ -1433,7 +1432,7 @@ residuals while distorting the geometry.}
 
 The two glycine conformers test the same model-generation layer starting
 from QC geometries when hydrogen-related directions are only partly supported.
-The complete sequence is summarized in Figure~\ref{fig:glycine-algorithmic-flow}.
+\rev{The complete sequence is summarized in Figure~\ref{fig:glycine-algorithmic-flow}.}
 
 \begin{figure*}
 \centering
@@ -1493,7 +1492,7 @@ positive optimized-space Hessian.
 The same Gly-I model was also rerun with weighted initial-geometry predicates
 on XY and X--H distances and selected heavy-atom/C--O--H angles
 ($\sigma_R=0.003$~\AA{}, $\sigma_A=0.3^\circ$). The rank remains 11, the
-condition number decreases from $1.34\times10^4$ to $8.02\times10^3$, and the
+condition number decreases from \rev{$1.34\times10^4$} to $8.02\times10^3$, and the
 complete rotational RMS changes only from 0.0269 to 0.0389 MHz. The propagated
 uncertainties remain chemically meaningful: the largest reported bond-length
 uncertainty is 0.0017~\AA{} and the largest valence-angle uncertainty is
@@ -1538,7 +1537,7 @@ QC-derived values & 19 & 0.2491 & 0.6707 & 62.06 \\
 Table~\ref{tab:glycine-constraint-comparison} shows that QC-derived targets
 produce the same rank and essentially the same residual scale as the published
 Kasalov{\'a}-type constraints. The final QC-constrained refinement has 19
-effective variables, a condition number of $2.02\times10^4$, and a complete
+effective variables, a condition number of \rev{$2.02\times10^4$}, and a complete
 rotational RMS residual of 0.2491 MHz. The largest uncertainties remain in the
 amino-hydrogen frame, as expected from the substitution pattern.
 
@@ -1550,8 +1549,8 @@ uncertainties below 0.25$^\circ$, whereas several amino-hydrogen angles and
 torsions retain larger propagated uncertainties. MORPHEUS therefore reports
 the predicates as useful stabilization and diagnostics, but does not interpret
 the poorly substituted hydrogen-frame directions as fully determined structural
-parameters. The comparison of the predicate variants is reported in
-Table~\ref{tab:glycine-predicate-checks}.
+parameters. \rev{The comparison of the predicate variants is reported in
+Table~\ref{tab:glycine-predicate-checks}.}
 
 \begin{center}
 \refstepcounter{table}
@@ -1569,9 +1568,9 @@ rotational residuals in MHz.\par}
 \toprule
 Model & Rank & Cond. & RMS \\
 \midrule
-Gly-I constraints & 11 & $1.34\times10^4$ & 0.0269 \\
+Gly-I constraints & 11 & \rev{$1.34\times10^4$} & 0.0269 \\
 Gly-I + predicates & 11 & $8.02\times10^3$ & 0.0389 \\
-Gly-II QC constraints & 19 & $2.02\times10^4$ & 0.2491 \\
+Gly-II QC constraints & 19 & \rev{$2.02\times10^4$} & 0.2491 \\
 Gly-II + predicates & 19 & $8.55\times10^3$ & 0.2401 \\
 \bottomrule
 \end{tabular}
@@ -1682,7 +1681,7 @@ coverage into explicit reduced-dimensionality constraints. The reference
 therefore supplies constraints for unsupported directions, while the
 spectroscopic data determine all supported directions.
 
-The norbornane-derived series adds the most stringent validation step. Norcamphor
+The norbornane-derived series adds the \rev{most stringent} validation step. Norcamphor
 shows that a bridged low-symmetry topology can be reduced to a stable
 semiexperimental model when isotope coverage is incomplete. Camphor keeps the
 same structural motif but adds methyl substitution and a denser set of
@@ -1696,7 +1695,7 @@ or Kraitchman-derived restraints are made too tight. This is the practical
 reason for making model construction explicit: the residual is necessary, but
 it is not a sufficient certificate of a meaningful structure.
 
-The framework is more than a convenient input generator. The final outputs remain
+\rev{The framework is more than a convenient input generator.} The final outputs remain
 ordinary chemical objects: Cartesian structures, bond lengths, valence angles,
 dihedrals, ring descriptors, propagated uncertainties, residuals, and
 diagnostics. What changes is that the path from topology and data to those
@@ -1704,7 +1703,7 @@ objects is explicit, reproducible, rank-tested, and challenged by independent
 stability checks, even for molecular graphs in which manual coordinate
 formulation is often the limiting step.
 
-The testosterone demonstration extends this logic to the largest system considered here. It does not claim a complete
+\rev{The testosterone demonstration extends this logic to the largest system considered here.} It does not claim a complete
 semiexperimental structure from a parent-only data set; instead, it shows that
 an accurate large-molecule QC geometry, accelerated $\Delta B_\mathrm{vib}$
 corrections, algorithmic non-redundant GIC generation, and class-constrained
@@ -1736,13 +1735,27 @@ diagnostics; additional diagnostic tables for glycolaldehyde, norcamphor, and
 camphor; final Cartesian coordinates, propagated topological parameters,
 residuals, and archived \texttt{MORPHEUS} output files.
 
-\section*{Code and Data Availability}
+\section*{Author Declarations}
 
-The benchmark input/output files, numerical audit trails, and statistical
+\subsection*{Conflict of Interest}
+
+\rev{The author has no conflicts to disclose.}
+
+\subsection*{Author Contributions}
+
+\rev{Vincenzo Barone: Conceptualization; Data curation; Formal analysis;
+Investigation; Methodology; Project administration; Resources; Software;
+Supervision; Validation; Visualization; Writing -- original draft; Writing --
+review and editing.}
+
+\section*{Data Availability}
+
+\rev{The data that support the findings of this study are openly available in
+the revision-pinned MORPHEUS 0.1.0rc8 repository of
+Ref.~\citenum{Barone2026MORPHEUSSoftware}.} The benchmark input/output files, numerical audit trails, and statistical
 diagnostics are documented in the Supporting Information. The standalone
-MORPHEUS 0.1.0rc8 source, runnable examples, benchmark inputs and outputs, and
-final-validation data are publicly available in the revision-pinned repository
-of Ref.~\citenum{Barone2026MORPHEUSSoftware}. The intramolecular primitive
+\rev{MORPHEUS 0.1.0rc8 source, runnable examples, benchmark inputs and outputs,
+and final-validation data are distributed with that release.} The intramolecular primitive
 definitions and Wilson $\mathbf{B}$ source used in the present work were
 generated by \texttt{ORACLE}; their non-redundant transformations were stored
 as \texttt{SONIC} contracts by \texttt{SMITH}. The companion
