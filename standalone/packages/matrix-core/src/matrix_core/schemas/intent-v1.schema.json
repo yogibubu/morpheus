@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://matrix.invalid/schema/intent-v1.schema.json",
-  "title": "The ONE intent compilation v1",
+  "title": "Keymaker intent compilation v1",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -10,7 +10,7 @@
     "execution_authorized"
   ],
   "properties": {
-    "schema": {"const": "matrix.the_one.intent.v1"},
+    "schema": {"const": "matrix.keymaker.intent.v1"},
     "compiler_id": {"type": "string", "minLength": 1},
     "request": {
       "type": "object",

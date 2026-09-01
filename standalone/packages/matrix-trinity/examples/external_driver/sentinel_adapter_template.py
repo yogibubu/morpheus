@@ -19,9 +19,10 @@ import argparse
 import importlib
 import json
 import math
-import os
 from pathlib import Path
 from collections.abc import Sequence
+
+from matrix_core import atomic_json_write
 
 
 REQUEST_SCHEMA = "matrix.link.sentinel.request.v1"
@@ -128,10 +129,7 @@ def _next_point(
 
 
 def _write_atomic(path: Path, payload: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
+    atomic_json_write(path, payload, sort_keys=False)
 
 
 if __name__ == "__main__":

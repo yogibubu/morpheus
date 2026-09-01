@@ -4,7 +4,8 @@ from pathlib import Path
 import tempfile
 from typing import Any
 
-from .definition import GICDefinition, write_sonic_build_sections_from_cartesian
+from .definition import write_sonic_build_sections_from_cartesian
+from .models import GICDefinition
 from .runtime.gicforge_python import LocalSALCSettings
 
 

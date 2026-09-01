@@ -1,7 +1,8 @@
 from pathlib import Path
-import numpy as np
 
 from .contracts import MATRIX_XYZ_TOPOLOGY_SCHEMA
+from .automorphisms import build_topology_automorphism_orbits, topology_automorphism_lines
+from .bonding_roles import is_bridging_ligand
 
 
 
@@ -37,9 +38,12 @@ def write_topology_section(
             if diagnostics.excluded_atoms
             else "NONE"
         )
+        fh.write(f"RING_BASIS_ALGORITHM {diagnostics.algorithm}\n")
+        fh.write(f"RING_BASIS_COMPLETE {'YES' if diagnostics.complete else 'NO'}\n")
         fh.write(f"RING_CANDIDATE_COUNT {diagnostics.candidate_cycle_count}\n")
         fh.write(f"RING_BASIS_RANK {diagnostics.cycle_rank}\n")
         fh.write(f"RING_BASIS_COUNT {diagnostics.selected_cycle_count}\n")
+        fh.write(f"RING_BASIS_MAXIMUM_SIZE {diagnostics.maximum_selected_size}\n")
         fh.write(f"RING_BASIS_ALLOWED_ATOMS {diagnostics.allowed_atom_count}\n")
         fh.write(f"RING_BASIS_ALLOWED_EDGES {diagnostics.allowed_edge_count}\n")
         fh.write(f"RING_BASIS_EXCLUDED_ATOMS {excluded}\n")
@@ -77,6 +81,38 @@ def write_topology_section(
     if dg.bonds:
         for i, j in dg.bonds:
             fh.write(f"{i + 1} {j + 1}\n")
+    else:
+        fh.write("NONE\n")
+
+    transitional_contacts = tuple(getattr(dg, "transitional_contacts", ()))
+    near_covalent_contacts = tuple(getattr(dg, "near_covalent_contacts", ()))
+    shared_monovalent_candidates = tuple(
+        (center, *sorted(dg.adjacency[center]))
+        for center, atomic_number in enumerate(dg.Z)
+        if is_bridging_ligand(int(atomic_number)) and len(dg.adjacency[center]) == 2
+    )
+
+    # This evidence is deliberately task-neutral.  The topology writer records
+    # candidates only; ORACLE's versioned TS catalog owns classification and
+    # chart prescription after a transition-state task is requested explicitly.
+    fh.write("\n[TRANSITION_STATE_EVIDENCE]\n")
+    fh.write("SOURCE SINGLE_GEOMETRY\n")
+    fh.write(f"BREAKING_COUNT {len(transitional_contacts)}\n")
+    fh.write(f"FORMING_COUNT {len(near_covalent_contacts)}\n")
+    fh.write(f"SHARED_MONOVALENT_COUNT {len(shared_monovalent_candidates)}\n")
+    for center, left, right in shared_monovalent_candidates:
+        fh.write(f"SHARED_MONOVALENT {center + 1} {left + 1} {right + 1}\n")
+
+    # Weak acyclic links are deliberately excluded from the constitutional
+    # graph, but ORACLE must retain them as typed evidence for exact TS and
+    # disconnected-fragment coordinate construction.  SMITH may use these
+    # rows as conditioning candidates; they never become covalent bonds here.
+    fh.write("\n[TRANSITIONAL_CONTACTS]\n")
+    if transitional_contacts or near_covalent_contacts:
+        for i, j in transitional_contacts:
+            fh.write(f"{i + 1} {j + 1} KIND=WEAK_ACYCLIC\n")
+        for i, j in near_covalent_contacts:
+            fh.write(f"{i + 1} {j + 1} KIND=NEAR_COVALENT\n")
     else:
         fh.write("NONE\n")
 
@@ -127,6 +163,19 @@ def write_topology_section(
         else:
             fh.write("NONE\n")
 
+        automorphism_orbits = (
+            build_topology_automorphism_orbits(
+                dg,
+                ringset,
+                synthons,
+                tuple(int(value) for value in dg.Z),
+                aromaticity=aromaticity,
+            )
+            if synthons is not None
+            else ()
+        )
+        fh.write("\n" + "\n".join(topology_automorphism_lines(automorphism_orbits)) + "\n")
+
     # ========================================================
     # AROMATICITY
     # ========================================================
@@ -145,7 +194,6 @@ def write_topology_section(
             fh.write(f"BONDS {bonds}\n")
         else:
             fh.write("BONDS NONE\n")
-
     # ========================================================
     # SMILES (optional)
     # ========================================================

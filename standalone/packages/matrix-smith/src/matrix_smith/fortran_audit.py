@@ -12,12 +12,9 @@ from matrix_chem import preprocess_to_enriched_xyz, read_enriched_xyz, write_val
 from matrix_engines import gicforge_fortran_layout, run_legacy_gicforge
 
 from .corpus import default_gic_corpus_root
-from .definition import (
-    GICDefinition,
-    build_gic_b_matrix,
-    build_gic_definition_from_xyzin,
-    write_gicforge_build_sections,
-)
+from .definition import build_gic_definition_from_xyzin, write_gicforge_build_sections
+from .evaluation import build_gic_b_matrix
+from .models import GICDefinition
 from .policy import SPECIAL_REDUCTION_CLASS, primitive_reduction_class
 
 

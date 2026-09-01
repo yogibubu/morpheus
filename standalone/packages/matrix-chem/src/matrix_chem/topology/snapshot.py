@@ -8,6 +8,7 @@ from typing import Any
 
 from matrix_core import read_sectioned_lines, section_content
 
+from ..geometry_io import read_enriched_xyz
 from .contracts import (
     SUPPORTED_TOPOLOGY_SCHEMAS,
     schema_from_line,
@@ -15,8 +16,9 @@ from .contracts import (
 )
 
 
-TOPOLOGY_SNAPSHOT_SCHEMA = "matrix.chem.topology_snapshot.v2"
+TOPOLOGY_SNAPSHOT_SCHEMA = "matrix.chem.topology_snapshot.v3"
 DEFAULT_SELECTED_RING_RELATIONS = 24
+DEFAULT_NUMERIC_TOLERANCE = 5.0e-6
 
 
 @dataclass(frozen=True)
@@ -44,12 +46,12 @@ def topology_snapshot_from_xyzin(
     )
     rings = _parse_rings(topology)
     aromatic = _parse_aromaticity(topology)
-    fragments = _connected_components(bonds)
+    transitional_contacts = _parse_transitional_contacts(topology)
+    fragments = _connected_components(bonds, natoms=read_enriched_xyz(Path(path)).natoms)
     relations = _ring_relations(rings)
     ring_basis = _parse_ring_basis(topology)
-    full = {
+    discrete = {
         "bonds": bonds,
-        "bond_orders": bond_orders,
         "rings": rings,
         "ring_relations": relations,
         "ring_basis": ring_basis,
@@ -74,7 +76,8 @@ def topology_snapshot_from_xyzin(
         "aromatic_atoms": aromatic["atoms"],
         "aromatic_bonds": aromatic["bonds"],
         "fragments": fragments,
-        "topology_sha256": _stable_sha256(full),
+        "transitional_contacts": transitional_contacts,
+        "topology_sha256": _stable_sha256(discrete),
     }
 
 
@@ -82,15 +85,18 @@ def topology_snapshot_document(
     entries: tuple[dict[str, Any], ...],
     *,
     rounding_decimals: int = 8,
+    numeric_tolerance: float = DEFAULT_NUMERIC_TOLERANCE,
     selected_ring_relations: int = DEFAULT_SELECTED_RING_RELATIONS,
 ) -> dict[str, Any]:
     return {
         "schema": TOPOLOGY_SNAPSHOT_SCHEMA,
         "description": (
-            "Golden topology snapshots for MATRIX LINK output. The hash covers bonds, "
-            "bond orders, rings, ring relations, aromaticity and connected fragments."
+            "Golden topology snapshots for MATRIX LINK output. The hash covers discrete "
+            "bonds, rings, ring relations, aromaticity and connected fragments; "
+            "continuous bond-order fields use an explicit cross-platform tolerance."
         ),
         "rounding_decimals": int(rounding_decimals),
+        "numeric_tolerance": float(numeric_tolerance),
         "selected_ring_relations": int(selected_ring_relations),
         "entries": entries,
     }
@@ -116,6 +122,8 @@ def topology_report_lines(path: Path) -> list[str]:
         f"Bond-order component rows: {len(snapshot['bond_order_components'])}",
         f"Rings: {snapshot['ring_count']}",
         f"Ring basis policy: {snapshot['ring_basis'].get('policy', 'UNKNOWN')}",
+        f"Ring basis algorithm: {snapshot['ring_basis'].get('algorithm', 'UNKNOWN')}",
+        f"Ring basis complete: {snapshot['ring_basis'].get('complete', 'UNKNOWN')}",
         f"Ring candidates: {snapshot['ring_basis'].get('candidate_count', 'UNKNOWN')}",
         "Ring basis rank/count: "
         f"{snapshot['ring_basis'].get('rank', 'UNKNOWN')}/"
@@ -163,6 +171,7 @@ def compare_topology_snapshot_entry(
     xyzin: Path,
     *,
     rounding_decimals: int,
+    numeric_tolerance: float = DEFAULT_NUMERIC_TOLERANCE,
 ) -> TopologySnapshotComparison:
     current = topology_snapshot_from_xyzin(
         Path(xyzin),
@@ -195,7 +204,46 @@ def compare_topology_snapshot_entry(
             if current.get(key) != expected.get(key):
                 messages.append(f"{expected.get('id', '<unknown>')}: first differing block {key}")
                 break
+    for key, numeric_fields in (
+        ("bond_orders", ("value",)),
+        ("bond_order_components", ("bond_order", "sigma", "pi", "pi_pi")),
+    ):
+        difference = _numeric_row_difference(
+            expected.get(key, ()),
+            current.get(key, ()),
+            numeric_fields=numeric_fields,
+            tolerance=numeric_tolerance,
+        )
+        if difference:
+            messages.append(f"{expected.get('id', '<unknown>')}: {key} {difference}")
     return TopologySnapshotComparison(ok=not messages, messages=tuple(messages))
+
+
+def _numeric_row_difference(
+    expected: Any,
+    current: Any,
+    *,
+    numeric_fields: tuple[str, ...],
+    tolerance: float,
+) -> str:
+    expected_rows = tuple(expected)
+    current_rows = tuple(current)
+    if len(expected_rows) != len(current_rows):
+        return f"row count changed expected={len(expected_rows)} current={len(current_rows)}"
+    for index, (expected_row, current_row) in enumerate(
+        zip(expected_rows, current_rows, strict=True)
+    ):
+        if tuple(expected_row.get("atoms", ())) != tuple(current_row.get("atoms", ())):
+            return f"row {index} atoms changed"
+        for field in numeric_fields:
+            expected_value = float(expected_row[field])
+            current_value = float(current_row[field])
+            if abs(expected_value - current_value) > tolerance:
+                return (
+                    f"row {index} {field} changed expected={expected_value!r} "
+                    f"current={current_value!r} tolerance={tolerance!r}"
+                )
+    return ""
 
 
 def _parse_bonds(topology: list[str]) -> tuple[tuple[int, int], ...]:
@@ -209,6 +257,34 @@ def _parse_bonds(topology: list[str]) -> tuple[tuple[int, int], ...]:
         i, j = int(parts[0]), int(parts[1])
         bonds.append(tuple(sorted((i, j))))
     return tuple(sorted(dict.fromkeys(bonds)))
+
+
+def _parse_transitional_contacts(topology: list[str]) -> tuple[dict[str, Any], ...]:
+    """Return raw ORACLE TS candidates without assigning a task or category."""
+
+    records: dict[tuple[int, int], str] = {}
+    for line in _subsection(topology, "TRANSITIONAL_CONTACTS"):
+        fields = line.split()
+        if not fields or fields[0].upper() == "NONE":
+            continue
+        if len(fields) != 3 or not fields[2].upper().startswith("KIND="):
+            raise ValueError(f"invalid transitional-contact line: {line}")
+        try:
+            left, right = sorted((int(fields[0]), int(fields[1])))
+        except ValueError as exc:
+            raise ValueError(f"invalid transitional-contact atom indexes: {line}") from exc
+        if left < 1 or left == right:
+            raise ValueError(f"invalid transitional-contact atom indexes: {line}")
+        kind = fields[2].split("=", 1)[1].strip().upper()
+        if kind not in {"WEAK_ACYCLIC", "NEAR_COVALENT"}:
+            raise ValueError(f"unsupported transitional-contact kind: {kind}")
+        previous = records.get((left, right))
+        if previous is not None and previous != kind:
+            raise ValueError(f"conflicting transitional-contact kinds: {line}")
+        records[(left, right)] = kind
+    return tuple(
+        {"atoms": pair, "kind": records[pair]} for pair in sorted(records)
+    )
 
 
 def _parse_bond_orders(
@@ -312,13 +388,17 @@ def _parse_aromaticity(topology: list[str]) -> dict[str, tuple[Any, ...]]:
 def _parse_ring_basis(topology: list[str]) -> dict[str, Any]:
     data: dict[str, Any] = {
         "policy": _header_value(topology, "RING_BASIS_POLICY") or "UNSPECIFIED",
+        "algorithm": _header_value(topology, "RING_BASIS_ALGORITHM") or "UNSPECIFIED",
     }
+    complete = _header_value(topology, "RING_BASIS_COMPLETE")
+    data["complete"] = complete is None or complete.upper() == "YES"
     numeric_keys = {
         "RING_CANDIDATE_COUNT": "candidate_count",
         "RING_BASIS_RANK": "rank",
         "RING_BASIS_COUNT": "count",
         "RING_BASIS_ALLOWED_ATOMS": "allowed_atom_count",
         "RING_BASIS_ALLOWED_EDGES": "allowed_edge_count",
+        "RING_BASIS_MAXIMUM_SIZE": "maximum_size",
     }
     for source_key, target_key in numeric_keys.items():
         value = _header_value(topology, source_key)
@@ -332,8 +412,12 @@ def _parse_ring_basis(topology: list[str]) -> dict[str, Any]:
     return data
 
 
-def _connected_components(bonds: tuple[tuple[int, int], ...]) -> tuple[tuple[int, ...], ...]:
-    atoms = sorted({atom for bond in bonds for atom in bond})
+def _connected_components(
+    bonds: tuple[tuple[int, int], ...],
+    *,
+    natoms: int,
+) -> tuple[tuple[int, ...], ...]:
+    atoms = list(range(1, int(natoms) + 1))
     parent = {atom: atom for atom in atoms}
 
     def find(atom: int) -> int:

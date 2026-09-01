@@ -1,3 +1,6 @@
-"""Single source of truth for the ORACLE distribution version."""
+"""MATRIX-wide version exposed by the ORACLE distribution."""
 
-__version__ = "0.1.0rc7"
+from matrix_core.version import MATRIX_VERSION
+
+
+__version__ = MATRIX_VERSION

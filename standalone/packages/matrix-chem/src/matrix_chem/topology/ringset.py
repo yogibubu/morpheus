@@ -17,7 +17,7 @@
 from collections import defaultdict
 
 from .cycle_basis import CycleBasisDiagnostics, elementary_cycle_basis
-from .metals import is_metal_atomic_number
+from .metals import METAL_ATOMIC_NUMBERS, is_metal_atomic_number
 
 try:
     from .rings import Ring
@@ -75,7 +75,16 @@ class RingSet:
         if nat is None:
             raise AttributeError("Graph must define natoms or n_atoms")
 
-        allowed_atoms = {atom for atom in range(nat) if not self._is_metal_atom(atom)}
+        atomic_numbers = getattr(self.graph, "Z", ())
+        allowed_atoms = (
+            {
+                atom
+                for atom in range(nat)
+                if int(atomic_numbers[atom]) not in METAL_ATOMIC_NUMBERS
+            }
+            if len(atomic_numbers) >= nat
+            else set(range(nat))
+        )
         selected_cycles, self.cycle_basis_diagnostics = elementary_cycle_basis(
             self.graph,
             allowed_atoms=allowed_atoms,
@@ -107,16 +116,15 @@ class RingSet:
         """
         Detect fused / connected rings.
         """
-        n = len(self.rings)
-
-        for i in range(n):
-            ri = self.rings[i]
-            for j in range(i + 1, n):
-                rj = self.rings[j]
-
-                if ri.shares_atoms_with(rj):
-                    ri.add_connected_ring(j)
-                    rj.add_connected_ring(i)
+        connected_pairs = set()
+        for ring_indices in self.atom_to_rings.values():
+            ordered = sorted(set(ring_indices))
+            for position, first in enumerate(ordered):
+                for second in ordered[position + 1 :]:
+                    connected_pairs.add((first, second))
+        for first, second in sorted(connected_pairs):
+            self.rings[first].add_connected_ring(second)
+            self.rings[second].add_connected_ring(first)
 
     # ============================================================
     # Public API

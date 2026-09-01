@@ -1,7 +1,11 @@
-import numpy as np
 from pathlib import Path
 
-try:
+import numpy as np
+
+
+def _smith_symmetry_api():
+    """Load the optional SMITH reporting extension only when it is requested."""
+
     from matrix_smith.survibfit.primitives import build_primitives
     from matrix_smith.survibfit.symmetry_classifier import group_label as _group_label
     from matrix_smith.survibfit.symmetry_detector import (
@@ -10,13 +14,15 @@ try:
         symmetry_elements_from_geometry,
     )
     from matrix_smith.survibfit.symmetry_global import primitive_permutation
-except Exception:  # pragma: no cover - fallback when `survibfit` is not top-level
-    build_primitives = None
-    _group_label = None
-    is_linear = None
-    orient_coords = None
-    symmetry_elements_from_geometry = None
-    primitive_permutation = None
+
+    return (
+        build_primitives,
+        _group_label,
+        is_linear,
+        orient_coords,
+        symmetry_elements_from_geometry,
+        primitive_permutation,
+    )
 
 
 # ============================================================
@@ -188,14 +194,14 @@ def _symmetry_summary(
     Compute point group and symmetry-equivalent primitive classes.
     Uses the same geometry already available in topology.
     """
-    if (
-        build_primitives is None
-        or _group_label is None
-        or is_linear is None
-        or symmetry_elements_from_geometry is None
-        or primitive_permutation is None
-    ):
-        raise RuntimeError("matrix_smith.survibfit is required for symmetry primitive reporting")
+    (
+        build_primitives,
+        _group_label,
+        is_linear,
+        orient_coords,
+        symmetry_elements_from_geometry,
+        primitive_permutation,
+    ) = _smith_symmetry_api()
     Z = np.asarray(cg.Z, dtype=int)
     coords = np.asarray(cg.coords, dtype=float)
     symbols = [_element_symbol(z) for z in Z]

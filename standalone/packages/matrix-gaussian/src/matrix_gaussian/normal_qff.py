@@ -89,7 +89,7 @@ def write_gaussian_qmw_anharmonic_constants(
 ) -> Path:
     """Write sparse Gaussian ``InDerAU`` D3/D4 constants.
 
-    ZION/TRINITY reduced constants are derivatives in dimensionless normal
+    ZAFF/TRINITY reduced constants are derivatives in dimensionless normal
     coordinates.  Gaussian's compact atomic-unit reader expects derivatives
     in mass-weighted normal coordinates.  For mode i the conversion scale is
     ``sqrt((omega_i / Eh_to_cm) / K_ii)``.

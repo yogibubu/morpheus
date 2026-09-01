@@ -1,13 +1,14 @@
 # Provenance
 
-- MORPHEUS version: `0.1.0rc6`
-- Source monorepo revision: `187ea913261fc8a20b4260b10175b0f37d74c87d`
-- Revision date: 2026-07-20T22:13:56+02:00
-- Snapshot prepared: 2026-07-21
-- Export rule: tracked files only, restricted to the twelve runtime components,
+- MORPHEUS version: `0.1.0rc8`
+- Source monorepo revision: `5352e8dd924ec04ba1a1f48563f521eaeaf8f574`
+- Revision date: 2026-08-29T17:24:15+02:00
+- Snapshot prepared: 2026-08-29
+- Export rule: tracked files only, restricted to the seventeen runtime components,
   the MORPHEUS release tools and documentation, runnable semiexperimental
   examples, and the semiexperimental manuscript benchmark inputs.
 
-The source monorepo was clean when the snapshot was exported. The release
-builder records this revision and SHA-256 hashes in
-`morpheus-release-manifest.json`.
+The snapshot also includes the MORPHEUS standalone-CLI, release-gate, and
+constraint-counting corrections validated in the source worktree immediately
+after that revision. The release builder records the base revision, dirty
+release inputs, and SHA-256 hashes in `morpheus-release-manifest.json`.

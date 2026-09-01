@@ -6,6 +6,8 @@ import re
 
 import numpy as np
 
+from matrix_chem import dihedral_operation_label_from_matrix
+
 
 _IRREP_ORDER_BY_POINT_GROUP = {
     "C1": ("A",),
@@ -34,6 +36,7 @@ _IRREP_ORDER_BY_POINT_GROUP = {
     ),
     "T": ("A", "E", "T"),
     "TD": ("A1", "A2", "E", "T1", "T2"),
+    "TH": ("Ag", "Eg", "Tg", "Au", "Eu", "Tu"),
     "O": ("A1", "A2", "E", "T1", "T2"),
     "OH": ("A1g", "A2g", "Eg", "T1g", "T2g", "A1u", "A2u", "Eu", "T1u", "T2u"),
     "I": ("A", "T1", "T2", "G", "H"),
@@ -53,59 +56,66 @@ def irrep_sequence(point_group: str | None) -> tuple[str, ...]:
     if exact:
         return exact
 
+    improper_match = re.fullmatch(r"S(\d+)", group.upper())
+    if improper_match:
+        order = int(improper_match.group(1))
+        if order >= 4 and order % 2 == 0:
+            return tuple(name for name, _wave, _dimension in _s2n_irrep_specs(order))
+
     match = re.fullmatch(r"([CD])(\d+)([VHD]?)", group.upper())
     if not match:
         return ("A",)
     family, n_text, suffix = match.groups()
     n = int(n_text)
+    e_names = [_e_name(idx, n) for idx in range(1, (n + 1) // 2)]
     if family == "C":
         if suffix == "V":
             base = ["A1", "A2"]
+            if n % 2 == 0:
+                base.extend(["B1", "B2"])
+            base.extend(e_names)
+            return tuple(base)
         elif suffix == "H":
             if n == 2:
                 return _IRREP_ORDER_BY_POINT_GROUP["C2H"]
             if n % 2 == 1:
                 base = ["A'", "A''"]
-                for idx in range(1, (n + 1) // 2):
-                    base.extend([f"{_e_name(idx, n)}'", f"{_e_name(idx, n)}''"])
-                return tuple(dict.fromkeys(base))
-            base = ["Ag", "Au"]
-        else:
-            base = ["A"]
+                for name in e_names:
+                    base.extend([f"{name}'", f"{name}''"])
+                return tuple(base)
+            modes = ["A", "B"]
+            modes.extend(e_names)
+            return tuple(f"{name}g" for name in modes) + tuple(
+                f"{name}u" for name in modes
+            )
+        base = ["A"]
         if n % 2 == 0:
-            base.extend(["B1", "B2"] if suffix == "V" else ["B"])
-        base.extend(f"E{idx}" for idx in range(1, max(1, n // 2)))
-        return tuple(dict.fromkeys(base))
+            base.append("B")
+        base.extend(e_names)
+        return tuple(base)
 
     base = ["A1", "A2"]
     if n % 2 == 0:
         base.extend(["B1", "B2"])
-    base.extend(f"E{idx}" for idx in range(1, max(1, n // 2)))
+    base.extend(e_names)
     if suffix == "D":
         if n % 2 == 1:
             return tuple(
                 dict.fromkeys([f"{name}g" for name in base] + [f"{name}u" for name in base])
             )
-        return tuple(dict.fromkeys(base))
-    if suffix == "H" and n % 2 == 0:
         return tuple(
-            dict.fromkeys(
-                [f"{name}g" for name in base if not name.startswith("E")]
-                + [name + "g" for name in base if name.startswith("E")]
-                + [f"{name}u" for name in base if not name.startswith("E")]
-                + [name + "u" for name in base if name.startswith("E")]
-            )
+            ["A1", "A2", "B1", "B2"]
+            + [_e_name(idx, 2 * n) for idx in range(1, n)]
+        )
+    if suffix == "H" and n % 2 == 0:
+        return tuple(f"{name}g" for name in base) + tuple(
+            f"{name}u" for name in base
         )
     if suffix == "H":
-        return tuple(
-            dict.fromkeys(
-                [f"{name}'" for name in base if not name.startswith("E")]
-                + [name + "'" for name in base if name.startswith("E")]
-                + [f"{name}''" for name in base if not name.startswith("E")]
-                + [name + "''" for name in base if name.startswith("E")]
-            )
+        return tuple(f"{name}'" for name in base) + tuple(
+            f"{name}''" for name in base
         )
-    return tuple(dict.fromkeys(base))
+    return tuple(base)
 
 
 def total_symmetric_irrep(point_group: str | None) -> str:
@@ -125,6 +135,19 @@ def irrep_name_prefix(irrep: str | None) -> str:
     """Convert an irrep label to a compact coordinate-name prefix."""
     text = (irrep or "X").strip() or "X"
     return text.replace("'", "p").replace('"', "pp")
+
+
+def irrep_dimension(irrep: str | None) -> int:
+    """Return the dimension of a conventional real molecular-point-group irrep."""
+
+    label = (irrep or "").strip().upper()
+    if not label:
+        raise ValueError("irrep label must be non-empty")
+    dimensions = {"A": 1, "B": 1, "E": 2, "T": 3, "G": 4, "H": 5}
+    dimension = dimensions.get(label[0])
+    if dimension is None:
+        raise ValueError(f"unsupported real molecular-point-group irrep: {irrep}")
+    return dimension
 
 
 def irrep_characters_for_operations(
@@ -158,7 +181,7 @@ def irrep_characters_for_operations(
             ("B", tuple(-1.0 if label.startswith("C2") else 1.0 for label in labels)),
         )
     if group_key == "C2H":
-        return _c2h_characters(labels)
+        return _c2h_characters(labels, operation_matrices=operation_matrices)
     if group_key == "C2V":
         sigma_labels = [label for label in labels if label.startswith("sigma")]
         preferred = ("sigma_xz", "sigma_yz", "sigma_xy")
@@ -219,6 +242,13 @@ def _generic_family_characters(
     | list[tuple[tuple[float, ...], ...]]
     | None = None,
 ) -> tuple[tuple[str, tuple[float, ...]], ...]:
+    improper_match = re.fullmatch(r"S(\d+)", group_key)
+    if improper_match:
+        return _s2n_characters(
+            labels,
+            int(improper_match.group(1)),
+            operation_matrices=operation_matrices,
+        )
     match = re.fullmatch(r"([CD])(\d+)([VHD]?)", group_key)
     if not match:
         return ()
@@ -229,9 +259,9 @@ def _generic_family_characters(
     if family == "C" and suffix == "":
         return _cn_characters(labels, n)
     if family == "C" and suffix == "V":
-        return _cnv_characters(labels, n)
+        return _cnv_characters(labels, n, operation_matrices=operation_matrices)
     if family == "C" and suffix == "H":
-        return _cnh_characters(labels, n) if n % 2 == 1 else ()
+        return _cnh_characters(labels, n)
     if family == "D" and suffix == "":
         return _dn_characters(labels, n)
     if family == "D" and suffix == "H":
@@ -241,6 +271,86 @@ def _generic_family_characters(
             return _matrix_dnd_label_characters(labels, n)
         return _dnd_characters(labels, n, operation_matrices=operation_matrices)
     return ()
+
+
+def _s2n_irrep_specs(order: int) -> tuple[tuple[str, int, float], ...]:
+    """Return real-irrep names, cyclic wave numbers and dimensions for S_2n."""
+
+    if order < 4 or order % 2:
+        return ()
+    n = order // 2
+    if n % 2 == 0:
+        return tuple(
+            [("A", 0, 1.0), ("B", n, 1.0)]
+            + [(_e_name(wave, order), wave, 2.0) for wave in range(1, n)]
+        )
+    modes = [("A", 0, 1.0)] + [
+        (_e_name(wave, n), wave, 2.0) for wave in range(1, (n + 1) // 2)
+    ]
+    specs: list[tuple[str, int, float]] = []
+    for suffix, parity in (("g", 1), ("u", -1)):
+        for name, wave, dimension in modes:
+            cyclic_wave = wave if (-1) ** wave == parity else wave + n
+            specs.append((name + suffix, cyclic_wave % order, dimension))
+    return tuple(specs)
+
+
+def _s2n_characters(
+    labels: tuple[str, ...],
+    order: int,
+    *,
+    operation_matrices: tuple[tuple[tuple[float, ...], ...], ...]
+    | list[tuple[tuple[float, ...], ...]]
+    | None,
+) -> tuple[tuple[str, tuple[float, ...]], ...]:
+    if operation_matrices is None or len(operation_matrices) != len(labels):
+        return ()
+    matrices = tuple(np.asarray(matrix, dtype=float) for matrix in operation_matrices)
+    powers = _cyclic_improper_operation_powers(matrices, order)
+    if powers is None:
+        return ()
+    rows: list[tuple[str, tuple[float, ...]]] = []
+    for name, wave, dimension in _s2n_irrep_specs(order):
+        rows.append(
+            (
+                name,
+                tuple(
+                    float(dimension * np.cos(2.0 * np.pi * wave * power / order))
+                    for power in powers
+                ),
+            )
+        )
+    return tuple(rows)
+
+
+def _cyclic_improper_operation_powers(
+    matrices: tuple[np.ndarray, ...],
+    order: int,
+) -> tuple[int, ...] | None:
+    identity = np.eye(3)
+    for generator in matrices:
+        if float(np.linalg.det(generator)) >= 0.0:
+            continue
+        generated: list[np.ndarray] = []
+        current = identity.copy()
+        for _power in range(order):
+            generated.append(current.copy())
+            current = current @ generator
+        if not np.allclose(current, identity, atol=1.0e-8):
+            continue
+        mapping: list[int] = []
+        for matrix in matrices:
+            matches = [
+                power
+                for power, candidate in enumerate(generated)
+                if np.allclose(matrix, candidate, atol=1.0e-8)
+            ]
+            if len(matches) != 1:
+                break
+            mapping.append(matches[0])
+        if len(mapping) == order:
+            return tuple(mapping)
+    return None
 
 
 def _cn_characters(
@@ -266,7 +376,58 @@ def _cn_characters(
 def _cnv_characters(
     labels: tuple[str, ...],
     n: int,
+    *,
+    operation_matrices: tuple[tuple[tuple[float, ...], ...], ...]
+    | list[tuple[tuple[float, ...], ...]]
+    | None = None,
 ) -> tuple[tuple[str, tuple[float, ...]], ...]:
+    operation_coordinates = _cnv_operation_coordinates(operation_matrices, n)
+    if operation_coordinates is not None:
+        rows: list[tuple[str, tuple[float, ...]]] = [
+            (
+                "A1",
+                tuple(1.0 for _reflected, _power in operation_coordinates),
+            ),
+            (
+                "A2",
+                tuple(-1.0 if reflected else 1.0 for reflected, _power in operation_coordinates),
+            ),
+        ]
+        if n % 2 == 0:
+            rows.extend(
+                (
+                    (
+                        "B1",
+                        tuple(
+                            (-1.0) ** power
+                            for _reflected, power in operation_coordinates
+                        ),
+                    ),
+                    (
+                        "B2",
+                        tuple(
+                            -((-1.0) ** power) if reflected else (-1.0) ** power
+                            for reflected, power in operation_coordinates
+                        ),
+                    ),
+                )
+            )
+        for order in range(1, (n + 1) // 2):
+            if n % 2 == 0 and order == n // 2:
+                continue
+            rows.append(
+                (
+                    _e_name(order, n),
+                    tuple(
+                        0.0
+                        if reflected
+                        else float(2.0 * np.cos(2.0 * np.pi * order * power / n))
+                        for reflected, power in operation_coordinates
+                    ),
+                )
+            )
+        return tuple(rows)
+
     rows: list[tuple[str, tuple[float, ...]]] = [
         ("A1", tuple(_cnv_one_dim_character(label, n, 0, 1) for label in labels)),
         ("A2", tuple(_cnv_one_dim_character(label, n, 0, -1) for label in labels)),
@@ -296,32 +457,108 @@ def _cnv_characters(
     return tuple(rows)
 
 
+def _cnv_operation_coordinates(
+    operation_matrices: tuple[tuple[tuple[float, ...], ...], ...]
+    | list[tuple[tuple[float, ...], ...]]
+    | None,
+    n: int,
+) -> tuple[tuple[bool, int], ...] | None:
+    if operation_matrices is None or len(operation_matrices) != 2 * n:
+        return None
+    matrices = tuple(np.asarray(matrix, dtype=float) for matrix in operation_matrices)
+    identity = np.eye(3)
+    generator = next(
+        (
+            matrix
+            for matrix in matrices
+            if float(np.linalg.det(matrix)) > 0.0
+            and np.allclose(
+                np.linalg.matrix_power(matrix, n),
+                identity,
+                atol=1.0e-8,
+            )
+            and not any(
+                np.allclose(
+                    np.linalg.matrix_power(matrix, power),
+                    identity,
+                    atol=1.0e-8,
+                )
+                for power in range(1, n)
+            )
+        ),
+        None,
+    )
+    reflection = next(
+        (matrix for matrix in matrices if float(np.linalg.det(matrix)) < 0.0),
+        None,
+    )
+    if generator is None or reflection is None:
+        return None
+    rotations = tuple(np.linalg.matrix_power(generator, power) for power in range(n))
+    reflected = tuple(reflection @ rotation for rotation in rotations)
+    coordinates: list[tuple[bool, int]] = []
+    for matrix in matrices:
+        matches = [
+            (False, power)
+            for power, candidate in enumerate(rotations)
+            if np.allclose(matrix, candidate, atol=1.0e-8)
+        ] + [
+            (True, power)
+            for power, candidate in enumerate(reflected)
+            if np.allclose(matrix, candidate, atol=1.0e-8)
+        ]
+        if len(matches) != 1:
+            return None
+        coordinates.append(matches[0])
+    return tuple(coordinates)
+
+
 def _cnh_characters(
     labels: tuple[str, ...],
     n: int,
 ) -> tuple[tuple[str, tuple[float, ...]], ...]:
     rows: list[tuple[str, tuple[float, ...]]] = []
-    base = [("A", 0)]
+    base: list[tuple[str, int, float]] = [("A", 0, 1.0)]
     if n % 2 == 0:
-        base.append(("B", n // 2))
-    for name, order in base:
-        rows.append((name + "'", tuple(_cnh_character(label, n, order, 1) for label in labels)))
-        rows.append((name + "''", tuple(_cnh_character(label, n, order, -1) for label in labels)))
+        base.append(("B", n // 2, 1.0))
     for order in range(1, (n + 1) // 2):
         if n % 2 == 0 and order == n // 2:
             continue
-        rows.append(
-            (
-                _e_name(order, n) + "'",
-                tuple(2.0 * _cnh_character(label, n, order, 1) for label in labels),
+        base.append((_e_name(order, n), order, 2.0))
+    if n % 2 == 1:
+        for name, order, dimension in base:
+            rows.append(
+                (
+                    name + "'",
+                    tuple(
+                        dimension * _cnh_character(label, n, order, 1)
+                        for label in labels
+                    ),
+                )
             )
-        )
-        rows.append(
-            (
-                _e_name(order, n) + "''",
-                tuple(2.0 * _cnh_character(label, n, order, -1) for label in labels),
+            rows.append(
+                (
+                    name + "''",
+                    tuple(
+                        dimension * _cnh_character(label, n, order, -1)
+                        for label in labels
+                    ),
+                )
             )
-        )
+        return tuple(rows)
+    for suffix, inversion_parity in (("g", 1.0), ("u", -1.0)):
+        for name, order, dimension in base:
+            horizontal_sign = inversion_parity * (-1.0 if order % 2 else 1.0)
+            rows.append(
+                (
+                    name + suffix,
+                    tuple(
+                        dimension
+                        * _cnh_character(label, n, order, int(horizontal_sign))
+                        for label in labels
+                    ),
+                )
+            )
     return tuple(rows)
 
 
@@ -490,9 +727,19 @@ def _dnd_even_effective_labels(
         return None
     out: list[str] = []
     for idx, label in enumerate(labels):
-        mapped = _dnd_even_effective_label(label, n)
-        if mapped is None and matrix_tuple is not None:
-            mapped = _dnd_even_effective_label_from_matrix(matrix_tuple[idx], n)
+        # In D_nd the serialized physical-axis index is not the axis index of
+        # the effective D_2n representation.  In particular, for D2d the two
+        # sigma_d planes and the two perpendicular C2 axes used to collapse
+        # onto the same effective labels, making the A2 and B1 character rows
+        # identical.  The operation matrix carries the unambiguous effective
+        # orientation, so prefer it whenever it is available.
+        mapped = (
+            _dnd_even_effective_label_from_matrix(matrix_tuple[idx], n)
+            if matrix_tuple is not None
+            else None
+        )
+        if mapped is None:
+            mapped = _dnd_even_effective_label(label, n)
         if mapped is None:
             return None
         out.append(_canonical_dnd_effective_label(mapped, order))
@@ -517,8 +764,17 @@ def _dnd_even_effective_label(label: str, n: int) -> str | None:
     match = re.fullmatch(r"sigma_v_(\d+)_(\d+)", label)
     if match:
         op_order, index = match.groups()
-        if int(op_order) == order:
-            return f"C2_xy_{order}_{int(index) % order}"
+        relative = order * int(index) / int(op_order)
+        nearest = int(round(relative))
+        if abs(relative - nearest) <= 1.0e-8:
+            return f"C2_xy_{order}_{nearest % order}"
+    match = re.fullmatch(r"sigma_h\*C(\d+)z\^(\d+)", label)
+    if match:
+        op_order, power = (int(item) for item in match.groups())
+        relative = order * power / op_order
+        nearest = int(round(relative))
+        if abs(relative - nearest) <= 1.0e-8 and nearest % 2 == 1:
+            return f"C{order}z^{nearest % order}"
     match = re.fullmatch(r"C(\d+)z\^(\d+)", label)
     if match:
         op_order, power = match.groups()
@@ -529,10 +785,10 @@ def _dnd_even_effective_label(label: str, n: int) -> str | None:
     match = re.fullmatch(r"C2_xy_(\d+)_(\d+)", label)
     if match:
         op_order, index = match.groups()
-        if int(op_order) == n:
-            return f"C2_xy_{order}_{(2 * int(index)) % order}"
-        if int(op_order) == order:
-            return f"C2_xy_{order}_{int(index) % order}"
+        relative = order * int(index) / int(op_order)
+        nearest = int(round(relative))
+        if abs(relative - nearest) <= 1.0e-8:
+            return f"C2_xy_{order}_{nearest % order}"
     if label in {"C2x", "C2y"}:
         return f"C2_xy_{order}_{0 if label == 'C2x' else n}"
     if label == "C2z":
@@ -749,35 +1005,7 @@ def _matrix_canonical_operation_label(label: str) -> str:
 
 
 def _dn_label_from_matrix(matrix: np.ndarray, n: int) -> str | None:
-    if not np.allclose(matrix.T @ matrix, np.eye(3), atol=1.0e-7):
-        return None
-    if float(np.linalg.det(matrix)) < 0.0:
-        return None
-    if np.allclose(matrix, np.eye(3), atol=1.0e-7):
-        return "E"
-    if np.allclose(matrix[2, :2], 0.0, atol=1.0e-7) and np.allclose(
-        matrix[:2, 2],
-        0.0,
-        atol=1.0e-7,
-    ):
-        if matrix[2, 2] > 0.0:
-            angle = np.arctan2(float(matrix[1, 0]), float(matrix[0, 0]))
-            power = int(round((angle % (2.0 * np.pi)) * n / (2.0 * np.pi))) % n
-            if power == 0:
-                return "E"
-            if n % 2 == 0 and power == n // 2:
-                return "C2z"
-            return f"C{n}z^{power}"
-        if _close(float(np.trace(matrix)), -1.0):
-            values, vectors = np.linalg.eig(matrix)
-            axis_index = int(np.argmin(np.abs(values - 1.0)))
-            axis = np.real(vectors[:, axis_index])
-            if abs(float(axis[2])) > 1.0e-6:
-                return None
-            angle = np.arctan2(float(axis[1]), float(axis[0])) % np.pi
-            index = int(round(angle * n / np.pi)) % n
-            return f"C2_xy_{n}_{index}"
-    return None
+    return dihedral_operation_label_from_matrix(matrix, n)
 
 
 def _diagonal_reflection_matrix() -> np.ndarray:
@@ -862,7 +1090,46 @@ def _d2_characters(labels: tuple[str, ...]) -> tuple[tuple[str, tuple[float, ...
     )
 
 
-def _c2h_characters(labels: tuple[str, ...]) -> tuple[tuple[str, tuple[float, ...]], ...]:
+def _c2h_characters(
+    labels: tuple[str, ...],
+    *,
+    operation_matrices: tuple[tuple[tuple[float, ...], ...], ...]
+    | list[tuple[tuple[float, ...], ...]]
+    | None = None,
+) -> tuple[tuple[str, tuple[float, ...]], ...]:
+    if operation_matrices is not None and len(operation_matrices) == len(labels):
+        rotations = tuple(np.asarray(matrix, dtype=float) for matrix in operation_matrices)
+        c2_sign = tuple(
+            1.0
+            if np.allclose(rotation, np.eye(3), atol=1.0e-8)
+            or np.allclose(rotation, -np.eye(3), atol=1.0e-8)
+            else -1.0
+            for rotation in rotations
+        )
+        inversion_sign = tuple(
+            -1.0 if float(np.linalg.det(rotation)) < 0.0 else 1.0
+            for rotation in rotations
+        )
+        return tuple(
+            (
+                name,
+                tuple(
+                    (a_sign if a_or_b == "A" else a_sign * rotation_sign)
+                    * (1.0 if parity == "g" else inversion)
+                    for rotation_sign, inversion in zip(
+                        c2_sign,
+                        inversion_sign,
+                        strict=True,
+                    )
+                ),
+            )
+            for name, a_or_b, parity, a_sign in (
+                ("Ag", "A", "g", 1.0),
+                ("Bg", "B", "g", 1.0),
+                ("Au", "A", "u", 1.0),
+                ("Bu", "B", "u", 1.0),
+            )
+        )
     values = {
         "Ag": {"E": 1.0, "C2z": 1.0, "i": 1.0, "sigma_xy": 1.0},
         "Bg": {"E": 1.0, "C2z": -1.0, "i": 1.0, "sigma_xy": -1.0},
@@ -916,8 +1183,14 @@ def _polyhedral_family_characters(
         matrix_rows = _matrix_polyhedral_label_characters(labels, group_key)
         if matrix_rows:
             return matrix_rows
-    if group_key in {"T", "TD", "O"}:
+    if group_key == "T":
+        return _t_characters(labels, operation_matrices=operation_matrices)
+    if group_key == "TD":
         return _td_like_characters(labels, operation_matrices=operation_matrices)
+    if group_key == "TH":
+        return _th_characters(labels, operation_matrices=operation_matrices)
+    if group_key == "O":
+        return _o_characters(labels, operation_matrices=operation_matrices)
     if group_key == "OH":
         return _oh_characters(labels, operation_matrices=operation_matrices)
     if group_key == "I":
@@ -933,6 +1206,88 @@ def _polyhedral_family_characters(
             centrosymmetric=True,
         )
     return ()
+
+
+def _t_characters(
+    labels: tuple[str, ...],
+    *,
+    operation_matrices: tuple[tuple[tuple[float, ...], ...], ...]
+    | list[tuple[tuple[float, ...], ...]]
+    | None,
+) -> tuple[tuple[str, tuple[float, ...]], ...]:
+    table = {
+        "A": {"E": 1.0, "C3": 1.0, "C2": 1.0},
+        "E": {"E": 2.0, "C3": -1.0, "C2": 2.0},
+        "T": {"E": 3.0, "C3": 0.0, "C2": -1.0},
+    }
+    classes = _polyhedral_operation_classes(labels, operation_matrices, family="TD")
+    if classes is None or any(operation_class not in {"E", "C3", "C2"} for operation_class in classes):
+        return ()
+    return tuple(
+        (irrep, tuple(chars[operation_class] for operation_class in classes))
+        for irrep, chars in table.items()
+    )
+
+
+def _th_characters(
+    labels: tuple[str, ...],
+    *,
+    operation_matrices: tuple[tuple[tuple[float, ...], ...], ...]
+    | list[tuple[tuple[float, ...], ...]]
+    | None,
+) -> tuple[tuple[str, tuple[float, ...]], ...]:
+    if operation_matrices is None or len(operation_matrices) != len(labels):
+        return ()
+    base = {
+        "A": {"E": 1.0, "C3": 1.0, "C2": 1.0},
+        "E": {"E": 2.0, "C3": -1.0, "C2": 2.0},
+        "T": {"E": 3.0, "C3": 0.0, "C2": -1.0},
+    }
+    classified: list[tuple[str, bool]] = []
+    for label, matrix in zip(labels, operation_matrices):
+        arr = np.asarray(matrix, dtype=float)
+        reflected = float(np.linalg.det(arr)) < 0.0
+        proper = -arr if reflected else arr
+        operation_class = _td_matrix_class(label, proper)
+        if operation_class not in {"E", "C3", "C2"}:
+            return ()
+        classified.append((str(operation_class), reflected))
+    rows: list[tuple[str, tuple[float, ...]]] = []
+    for suffix, parity in (("g", 1.0), ("u", -1.0)):
+        for name, chars in base.items():
+            rows.append(
+                (
+                    name + suffix,
+                    tuple(
+                        chars[operation_class] * (parity if reflected else 1.0)
+                        for operation_class, reflected in classified
+                    ),
+                )
+            )
+    return tuple(rows)
+
+
+def _o_characters(
+    labels: tuple[str, ...],
+    *,
+    operation_matrices: tuple[tuple[tuple[float, ...], ...], ...]
+    | list[tuple[tuple[float, ...], ...]]
+    | None,
+) -> tuple[tuple[str, tuple[float, ...]], ...]:
+    table = {
+        "A1": {"E": 1.0, "C3": 1.0, "C2_axis": 1.0, "C4": 1.0, "C2_edge": 1.0},
+        "A2": {"E": 1.0, "C3": 1.0, "C2_axis": 1.0, "C4": -1.0, "C2_edge": -1.0},
+        "E": {"E": 2.0, "C3": -1.0, "C2_axis": 2.0, "C4": 0.0, "C2_edge": 0.0},
+        "T1": {"E": 3.0, "C3": 0.0, "C2_axis": -1.0, "C4": 1.0, "C2_edge": -1.0},
+        "T2": {"E": 3.0, "C3": 0.0, "C2_axis": -1.0, "C4": -1.0, "C2_edge": 1.0},
+    }
+    classes = _polyhedral_operation_classes(labels, operation_matrices, family="OH")
+    if classes is None or any(operation_class.startswith("i*") for operation_class in classes):
+        return ()
+    return tuple(
+        (irrep, tuple(chars[operation_class] for operation_class in classes))
+        for irrep, chars in table.items()
+    )
 
 
 def _td_like_characters(
@@ -1032,6 +1387,21 @@ def _matrix_polyhedral_label_characters(
     labels: tuple[str, ...],
     group_key: str,
 ) -> tuple[tuple[str, tuple[float, ...]], ...]:
+    if group_key == "TH":
+        base = _matrix_polyhedral_label_characters(labels, "T")
+        parity = tuple(
+            -1.0
+            if label == "i"
+            or label.startswith("i")
+            or label.startswith("sigma")
+            or label.startswith("S")
+            else 1.0
+            for label in labels
+        )
+        return tuple((f"{name}g", chars) for name, chars in base) + tuple(
+            (f"{name}u", tuple(char * sign for char, sign in zip(chars, parity)))
+            for name, chars in base
+        )
     if group_key in {"TD", "O"}:
         table = {
             "A1": (1.0, 1.0, 1.0, 1.0, 1.0),
@@ -1407,9 +1777,9 @@ def _vertical_reflection_index(label: str, n: int) -> int:
         order, index = match.groups()
         return int(round(n * int(index) / int(order))) % n
     if label == "sigma_xz":
-        return n // 2 if n % 2 == 0 else 1
+        return 0
     if label == "sigma_yz":
-        return 1
+        return n // 2 if n % 2 == 0 else 1
     return 0
 
 

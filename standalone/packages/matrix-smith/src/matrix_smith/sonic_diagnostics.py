@@ -6,6 +6,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 import hashlib
 import json
+import multiprocessing
 import os
 from pathlib import Path
 import re
@@ -13,6 +14,7 @@ from typing import Callable, Sequence
 
 import numpy as np
 
+from matrix_core import atomic_json_write
 from matrix_chem import (
     Structure,
     atomic_mass,
@@ -23,14 +25,17 @@ from matrix_chem import (
     topology_bonds_from_xyzin,
 )
 from matrix_chem.topology.elements import atomic_number
-from matrix_core import kabsch_rotation, read_xyzin_isotopologue_records
+from matrix_chem import (
+    kabsch_rotation,
+    read_xyzin_isotopologue_records,
+)
 from matrix_qm import read_cartesian_hessian_section
 
-from .definition import (
+from .definition import read_gic_definition_from_xyzin
+from .evaluation import (
     build_gic_b_matrix,
     evaluate_gic_value,
     evaluate_gic_values,
-    read_gic_definition_from_xyzin,
 )
 from .symmetry_labels import is_total_symmetric_irrep
 
@@ -165,10 +170,29 @@ def available_topology_workers() -> int:
     return max(1, int(os.cpu_count() or 1))
 
 
-def recommended_topology_workers(task_count: int) -> int:
-    """Choose a conservative worker count without penalizing small molecules."""
+def topology_process_start_method() -> str:
+    """Return the platform process-start policy used by Python workers."""
+
+    return multiprocessing.get_context().get_start_method()
+
+
+def recommended_topology_workers(
+    task_count: int,
+    *,
+    start_method: str | None = None,
+) -> int:
+    """Choose workers without imposing spawn serialization on every task."""
+
     tasks = max(0, int(task_count))
     if tasks <= 8:
+        return 1
+    method = str(start_method or topology_process_start_method()).strip().casefold()
+    if method != "fork":
+        # These topology probes are short and share large immutable NumPy
+        # arrays. On spawn/forkserver platforms each process serializes that
+        # context; the measured cost exceeds the complete 114-coordinate
+        # pagodane audit. Explicit worker requests remain available for a
+        # caller with a separately benchmarked large workload.
         return 1
     desired = max(
         2,
@@ -961,9 +985,7 @@ def _load_topology_cache(path: Path, fingerprint: str) -> dict[str, object]:
 
 
 def _write_topology_cache(path: Path, payload: dict[str, object]) -> None:
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    atomic_json_write(path, payload)
 
 
 def _motion_result_cache_record(

@@ -8,6 +8,9 @@ should import these constants instead of hard-coding family names locally.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import warnings
+
+from matrix_chem import DEFAULT_SPECIAL_EDGE_EFFECTIVE_ORDER
 
 
 COORDINATE_METHOD_NAME = "SONIC"
@@ -16,13 +19,28 @@ LEGACY_COORDINATE_METHOD_NAME = "SMITH"
 GIC_BACKEND = "oracle-native-primitive.v1"
 SYCART_BACKEND = "oracle-native-cartesian-nullspace.v1"
 B_MATRIX_BACKEND = "oracle-native-analytic-bmatrix.v1"
+RING_PUCKERING_ROLE_OPERATIVE = "OPERATIVE"
+RING_PUCKERING_ROLE_GLOBAL = "GLOBAL"
+RING_PUCKERING_ROLE_DESCRIPTOR = "DESCRIPTOR"
+RING_PUCKERING_ROLE_LEGACY = "LEGACY"
+RING_PUCKERING_MODEL_TRIANGULAR_FLAP = "triangular_flap"
+RING_PUCKERING_MODEL_CHARM = "charm"
+RING_PUCKERING_MODEL_CREMER_POPLE = "cremer_pople"
+RING_PUCKERING_MODEL_LEGACY = "legacy"
+RING_PUCKERING_ROLE_MODELS = {
+    RING_PUCKERING_ROLE_OPERATIVE: RING_PUCKERING_MODEL_TRIANGULAR_FLAP,
+    RING_PUCKERING_ROLE_GLOBAL: RING_PUCKERING_MODEL_CHARM,
+    RING_PUCKERING_ROLE_DESCRIPTOR: RING_PUCKERING_MODEL_CREMER_POPLE,
+    RING_PUCKERING_ROLE_LEGACY: RING_PUCKERING_MODEL_LEGACY,
+}
+RING_PUCKERING_ROLES = frozenset(RING_PUCKERING_ROLE_MODELS)
 RANK_METHOD = "analytic_b_matrix_mgs_greedy"
 RANK_TOLERANCE = 1.0e-7
 DIAGNOSTIC_FINITE_DIFFERENCE_STEP = 1.0e-5
 # Gaussian/GDV DefRed and FCEstG classify an angle as linear when it lies
 # within 15 degrees of pi.  All SONIC generators use this single threshold.
 LINEAR_ANGLE_DEGREES = 165.0
-PSEUDO_BOND_EFFECTIVE_ORDER = 0.25
+PSEUDO_BOND_EFFECTIVE_ORDER = DEFAULT_SPECIAL_EDGE_EFFECTIVE_ORDER
 PSEUDO_CYCLE_CLOSURE_VDW_SCALE = 1.05
 ORDINARY_REDUCTION_CLASS = "ORDINARY"
 SPECIAL_REDUCTION_CLASS = "SPECIAL_PROTECTED"
@@ -30,11 +48,28 @@ REDUCTION_POLICY = "SPECIAL_PROTECTED_FIRST_THEN_ORDINARY_ANALYTIC_RANK"
 LOCAL_SYMMETRIZATION_METHOD = "LOCAL_BLOCK_SALC"
 POINT_GROUP_PROJECTOR_METHOD = "POINT_GROUP_PROJECTOR"
 SYMMETRIZATION_POLICY = "ORACLE_TYPE_BLOCK_SUM_AND_DIFFERENCE"
+PSEUDOBOND_TORSION_METRIC_SYMMETRIZATION_POLICY = (
+    "ORACLE_TYPE_BLOCK_PLUS_RESIDUAL_B_METRIC_TORSION_EIGENBASIS"
+)
+MAX_NORMALIZED_SONIC_CONDITION = 100.0
+CANONICAL_SALC_DIAGNOSTIC = "CANONICAL_CATALOG=YES"
+AROMATIC_LOCAL_SALC_DIAGNOSTIC = "AROMATIC_LOCAL_SALC=YES"
+AROMATIC_LOCAL_MODEL_DIAGNOSTIC = "MODEL=AROMATIC_LOCAL_OUT_OF_PLANE"
+ANALYTIC_SALC_BLOCKS = frozenset({"RDef", "RPck", "BtFl", "Spir"})
+CAGE_SPECIAL_BLOCKS = frozenset({"BtFl", "Spir"})
+RING_SPECIAL_BLOCKS = frozenset({"RDef", "RPck"})
 PROJECTOR_SYMMETRIZATION_POLICY = "HOMOGENEOUS_TYPE_BLOCK_POINT_GROUP_PROJECTOR"
 SYMMETRY_OPERATION_TOLERANCE_ANGSTROM = 1.0e-3
 SYMMETRY_OPERATION_NEAR_THRESHOLD_FRACTION = 0.25
 SALC_PATH_OVERLAP_WARNING_THRESHOLD = 0.98
 SALC_PATH_PIVOT_GAP_WARNING = 1.0e-6
+# Cross-platform LAPACK implementations may rotate a numerically equivalent
+# SALC basis at the last few decimal places.  Golden gates compare projectors,
+# not basis gauges, with this shared absolute tolerance.
+SALC_SUBSPACE_PROJECTOR_TOLERANCE = 1.0e-7
+# Reference phase construction passes through eigensolvers and trigonometric
+# reduction.  This bound is shared by every supported CPU architecture.
+REFERENCE_PHASE_TOLERANCE_DEGREES = 2.0e-5
 FRAGMENT_MODE_SPECIAL_COORDINATES = "SPECIAL_COORDINATES"
 FRAGMENT_MODE_PSEUDO_BONDS = "PSEUDO_BONDS"
 FRAGMENT_MODE_NONE = "NONE"
@@ -58,6 +93,93 @@ XH_STRETCH_POLICIES = frozenset(
         XH_STRETCH_POLICY_LOCAL_SELECTED,
     }
 )
+
+
+@dataclass(frozen=True)
+class SonicConstructionPolicy:
+    """Single policy contract shared by SONIC construction and reporting."""
+
+    analytic_salc_blocks: frozenset[str] = ANALYTIC_SALC_BLOCKS
+    cage_special_blocks: frozenset[str] = CAGE_SPECIAL_BLOCKS
+    ring_special_blocks: frozenset[str] = RING_SPECIAL_BLOCKS
+    canonical_salc_diagnostic: str = CANONICAL_SALC_DIAGNOSTIC
+    aromatic_salc_diagnostic: str = AROMATIC_LOCAL_SALC_DIAGNOSTIC
+    aromatic_model_diagnostic: str = AROMATIC_LOCAL_MODEL_DIAGNOSTIC
+    aromatic_default_model: str = "local_out_of_plane"
+    normalized_condition_advisory: float = MAX_NORMALIZED_SONIC_CONDITION
+
+    def is_analytic_salc(self, *, block: str, diagnostic: str) -> bool:
+        return (
+            self.canonical_salc_diagnostic in diagnostic
+            or self.aromatic_salc_diagnostic in diagnostic
+            or block in self.analytic_salc_blocks
+        )
+
+    def effective_ring_model(self, requested: str, *, aromatic: bool) -> str:
+        model = normalize_ring_puckering_model(requested)
+        if aromatic and model == RING_PUCKERING_MODEL_TRIANGULAR_FLAP:
+            return self.aromatic_default_model
+        return model
+
+
+SONIC_CONSTRUCTION_POLICY = SonicConstructionPolicy()
+
+
+def ring_puckering_model_for_role(role: str) -> str:
+    """Return the canonical ring model for an explicit scientific role."""
+
+    normalized = str(role).strip().upper().replace("-", "_")
+    try:
+        return RING_PUCKERING_ROLE_MODELS[normalized]
+    except KeyError as exc:
+        allowed = ", ".join(sorted(RING_PUCKERING_ROLES))
+        raise ValueError(f"unsupported ring puckering role {role!r}; use {allowed}") from exc
+
+
+def normalize_ring_puckering_model(value: str) -> str:
+    """Normalize the shared ring-model vocabulary and emit legacy warnings."""
+
+    normalized = str(value).strip().lower().replace("-", "_")
+    aliases = {
+        "triangular_flap": "triangular_flap",
+        "flap": "triangular_flap",
+        "hill_reilly": "triangular_flap",
+        "local_out_of_plane": "local_out_of_plane",
+        "out_of_plane": "local_out_of_plane",
+        "u_fourier": "local_out_of_plane",
+        "charm": "charm",
+        "cyclic_height_averaged_ring_modes": "charm",
+        "frisch_height": "charm",
+        "frisch": "charm",
+        "h_fourier": "charm",
+        "symmetrized_height": "charm",
+        "endocyclic_dihedral": "endocyclic_dihedral",
+        "dihedral": "endocyclic_dihedral",
+        "legacy": "endocyclic_dihedral",
+    }
+    try:
+        result = aliases[normalized]
+    except KeyError as exc:
+        raise ValueError(
+            "ring_puckering_model must be triangular_flap, charm, "
+            "local_out_of_plane, or endocyclic_dihedral"
+        ) from exc
+    if normalized in {"frisch_height", "frisch", "h_fourier", "symmetrized_height"}:
+        warnings.warn(
+            f"ring_puckering_model={value!r} is deprecated; use 'charm'",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+    if result == "endocyclic_dihedral":
+        warnings.warn(
+            "endocyclic ring dihedrals are legacy/deprecated; use triangular_flap, "
+            "charm, or local_out_of_plane",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+    return result
+
+
 FRAGMENT_MODES = frozenset(
     {
         FRAGMENT_MODE_NONE,
@@ -78,6 +200,13 @@ class PrimitiveFamilyPolicy:
 
 PRIMITIVE_FAMILY_POLICIES = (
     PrimitiveFamilyPolicy("STRETCH", "R", "Str", ORDINARY_REDUCTION_CLASS, "STRETCH"),
+    PrimitiveFamilyPolicy(
+        "TS_REACTION_DISTANCE",
+        "R",
+        "TSRe",
+        SPECIAL_REDUCTION_CLASS,
+        "TS_REACTION_DISTANCE",
+    ),
     PrimitiveFamilyPolicy(
         "LOCAL_XH_STRETCH",
         "R",
@@ -206,6 +335,27 @@ PRIMITIVE_FAMILY_POLICIES = (
         SPECIAL_REDUCTION_CLASS,
         "SPECIAL_HBOND_DISTANCE",
     ),
+    PrimitiveFamilyPolicy(
+        "PSEUDO_BOND_DISTANCE",
+        "R",
+        "PBDi",
+        SPECIAL_REDUCTION_CLASS,
+        "SPECIAL_PSEUDO_BOND_DISTANCE",
+    ),
+    PrimitiveFamilyPolicy(
+        "PSEUDO_BOND_BEND",
+        "A",
+        "PBAn",
+        SPECIAL_REDUCTION_CLASS,
+        "SPECIAL_PSEUDO_BOND_CONTACT",
+    ),
+    PrimitiveFamilyPolicy(
+        "PSEUDO_BOND_TORSION",
+        "D",
+        "PBTo",
+        SPECIAL_REDUCTION_CLASS,
+        "SPECIAL_PSEUDO_BOND_CONTACT",
+    ),
 )
 
 PRIMITIVE_POLICY_BY_FAMILY = {policy.family: policy for policy in PRIMITIVE_FAMILY_POLICIES}
@@ -219,7 +369,6 @@ SPECIAL_PRIMITIVE_FAMILIES = frozenset(
 SYMMETRY_BLOCK_BY_FAMILY = {
     policy.family: policy.symmetry_block for policy in PRIMITIVE_FAMILY_POLICIES
 }
-
 
 def primitive_reduction_class(family: str) -> str:
     policy = PRIMITIVE_POLICY_BY_FAMILY.get(family)

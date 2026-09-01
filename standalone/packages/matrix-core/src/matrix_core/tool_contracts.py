@@ -9,6 +9,45 @@ from .sectioned_xyz import is_section_header_line, read_sectioned_lines, xyz_tai
 
 PLANNED_FRAMEWORK_NAME = "MATRIX"
 PLANNED_FRAMEWORK_EXPANSION = "Molecular Analysis Toolkit for Reusable Integrated eXperiments"
+NANO_MATRIX_SCIENTIFIC_CONTRACT_SCHEMA = "nano-matrix.scientific-contract.v1"
+
+
+@dataclass(frozen=True)
+class ScientificInvariant:
+    key: str
+    requirement: str
+
+    def to_dict(self) -> dict[str, str]:
+        return asdict(self)
+
+
+NANO_MATRIX_SCIENTIFIC_INVARIANTS: tuple[ScientificInvariant, ...] = (
+    ScientificInvariant(
+        "CONTINUOUS_PHYSICS",
+        "Physical energies, observables and parameter interpolations are continuous "
+        "and provide the differentiability required by their consumers.",
+    ),
+    ScientificInvariant(
+        "ASYMPTOTIC_CORRECTNESS",
+        "Every physical model preserves its declared short-range, long-range, "
+        "dissociation and boundary limits.",
+    ),
+    ScientificInvariant(
+        "NO_TOPOLOGICAL_DISCONTINUITIES",
+        "Discrete graphs, types and neighbor lists never create discontinuities in "
+        "physical energies or observables; energetic topology uses continuous weights.",
+    ),
+    ScientificInvariant(
+        "SINGLE_SCIENTIFIC_OWNER",
+        "Tools consume canonical owner APIs and do not duplicate scientific formulas "
+        "or parameter libraries.",
+    ),
+    ScientificInvariant(
+        "BACKEND_EQUIVALENCE",
+        "Reference, compiled CPU, parallel and GPU paths evaluate the same scientific "
+        "function within declared tolerances.",
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -17,6 +56,7 @@ class ToolContract:
     display_name: str
     current_package: str
     standalone_command: str
+    operation_key: str = ""
     required_sections: tuple[str, ...] = ()
     optional_sections: tuple[str, ...] = ()
     produced_sections: tuple[str, ...] = ()
@@ -63,6 +103,7 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
         display_name="ORACLE import adapters",
         current_package="matrix-link (legacy package name)",
         standalone_command="link preprocess SOURCE OUTPUT",
+        operation_key="switch",
         produced_sections=("SOURCE", "BASIC"),
         planned_name="ORACLE import",
         expanded_name="",
@@ -81,13 +122,15 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
             "matrix oracle analyze SOURCE -o molecule.xyzin --human-report molecule.oracle.txt; "
             "matrix oracle report molecule.xyzin; "
             "matrix oracle refine-l1 molecule.xyzin -o molecule.pl1.xyzin; "
-            "matrix architect build molecule.xyzin --output molecule.zion.json"
+            "matrix architect build molecule.xyzin --output molecule.zaff.json"
         ),
+        operation_key="oracle",
         required_sections=("BASIC",),
         optional_sections=("CARTESIAN_HESSIAN",),
         produced_sections=(
             "SYMMETRY",
             "TOPOLOGY",
+            "AROMATICITY",
             "SYNTHONS",
             "PRIMITIVES",
             "ACCURACY_LADDER_REFINEMENT",
@@ -95,13 +138,16 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
         owned_sections=(
             "SYMMETRY",
             "TOPOLOGY",
+            "AROMATICITY",
             "SYNTHONS",
             "PRIMITIVES",
             "ACCURACY_LADDER_REFINEMENT",
         ),
         produced_artifacts=(
-            "matrix.xyz.primitives.v1",
+            "matrix.xyz.primitives.v2",
             "oracle.xyz.accuracy_ladder_refinement.v1",
+            "matrix.tank.perception_proposal.v1",
+            "matrix.tank.geometry_proposal.v1",
         ),
         owned_capabilities=(
             "IMPORT_NORMALIZATION",
@@ -112,6 +158,8 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
             "SYNTHONS",
             "PIC_SOURCE",
             "GEOMETRY_CORRECTIONS",
+            "TANK_LCB26_PERCEPTION",
+            "TANK_LCB26_GEOMETRY",
         ),
         planned_name="ORACLE",
         expanded_name="Operator for Recognition, Atom-typing and Continuous Local Equivalence",
@@ -122,8 +170,9 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
             "delocalization, strain, bond-order and synthon descriptors, and the redundant "
             "primitive/Wilson-B source used by SMITH and all consumers, applies posterior "
             "L1-to-PL1 geometry corrections. Hessian reduction and force-field construction "
-            "belong to ARCHITECT/ZION; the old ORACLE entry point is hidden and deprecated. "
+            "belong to ARCHITECT/ZAFF; the old ORACLE entry point is hidden and deprecated. "
             "The desktop GUI remains an ORACLE client/orchestrator, not a separate chemistry engine."
+            " TANK is the public LCB26 donor-search and geometry-assembly capability owned by ORACLE."
         ),
     ),
     ToolContract(
@@ -152,18 +201,24 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
         notes=(
             "Consumes a QM density matrix or complete molecular orbitals plus AO basis. "
             "Produces the sole backend-independent CM5/Mayer contract used by ORACLE and "
-            "required by ARCHITECT/ZION. Alternative population definitions require an "
+            "required by ARCHITECT/ZAFF. Alternative population definitions require an "
             "explicitly labelled override and never replace the default silently."
         ),
     ),
     ToolContract(
         key="qm_adapters",
         display_name="QM adapters",
-        current_package="matrix-gaussian / matrix-molpro / matrix-mrcc / matrix-orca",
+        current_package=(
+            "matrix-qm / matrix-gaussian / matrix-molpro / matrix-mrcc / matrix-orca / "
+            "matrix-cfour / matrix-xtb / matrix-pyscf / matrix-et"
+        ),
         standalone_command=(
             "matrix gaussian promote-fchk|promote-rovib|promote-electronic; "
-            "matrix molpro promote; matrix mrcc promote; matrix orca promote"
+            "matrix molpro promote; matrix mrcc promote; matrix orca promote; "
+            "matrix cfour run|status; matrix xtb run|status|summary; "
+            "matrix pyscf run|status|summary; matrix et run|status"
         ),
+        operation_key="qm",
         produced_sections=(
             "SOURCE",
             "BASIC",
@@ -194,9 +249,11 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
             "ORBITALS",
             "PROPERTIES",
         ),
+        owned_capabilities=("QM_RESULT_CONTRACT", "QM_PROVIDER_DISPATCH"),
         notes=(
             "One adapter owns each external QM format. Scientific tools consume only "
-            "the normalized xyzin sections and never reparse Gaussian/Molpro/MRCC/ORCA output. "
+            "the normalized xyzin sections and never reparse provider output. Gaussian, "
+            "Molpro, MRCC, ORCA, CFOUR, xTB, PySCF and eT are registered providers. "
             "#PROPERTIES stores program-dependent QM properties with unit/conversion metadata. "
             "The adapters expose densities/orbitals to APOC; APOC alone owns #QM_POPULATION."
         ),
@@ -221,11 +278,12 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
         display_name="SMITH / SONIC",
         current_package="matrix-smith",
         standalone_command="matrix smith standalone molecule.smith.xyz molecule.xyzin",
+        operation_key="smith",
         required_sections=(),
         optional_sections=("PRIMITIVES", "FRAGMENTS"),
         produced_sections=("GIC", "SYCART"),
         owned_sections=("GIC", "SYCART"),
-        consumed_artifacts=("matrix.xyz.primitives.v1",),
+        consumed_artifacts=("matrix.xyz.primitives.v2",),
         produced_artifacts=(
             "oracle.gic.definition.v1",
             "matrix.smith.sonic_diagnostics.v2",
@@ -251,30 +309,30 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
     ),
     ToolContract(
         key="architect",
-        display_name="ARCHITECT / ZION",
-        current_package="matrix-architect",
+        display_name="ARCHITECT authoring / ZAFF runtime",
+        current_package="matrix-architect / matrix-zaff",
         standalone_command=(
-            "architect build molecule.xyzin --output field.zion.json; "
-            "architect validate field.zion.json; architect evaluate field.zion.json point.xyz"
+            "architect build molecule.xyzin --output field.zaff.json; "
+            "architect validate field.zaff.json; architect evaluate field.zaff.json point.xyz"
         ),
         required_sections=("BASIC", "PRIMITIVES", "SYNTHONS", "CARTESIAN_HESSIAN"),
         optional_sections=("GIC", "ACCURACY_LADDER_REFINEMENT"),
         consumed_artifacts=(
-            "matrix.xyz.primitives.v1",
+            "matrix.xyz.primitives.v2",
             "oracle.gic.definition.v1",
         ),
         produced_artifacts=(
-            "matrix.zion.force_field.v1",
+            "matrix.zaff.force_field.v1",
             "matrix.architect.evaluation.v1",
             "matrix.architect.derivative_validation.v1",
         ),
         owned_capabilities=(
-            "ZION_FORCE_FIELD_CONSTRUCTION",
+            "ZAFF_FORCE_FIELD_CONSTRUCTION",
             "PIC_VS_LOCAL_SONIC_SELECTION",
             "COUPLING_SELECTION",
             "B_MATRIX_FIRST_DERIVATIVE",
             "HESSIAN_COORDINATE_TRANSFORMATION",
-            "FORCE_FIELD_EGH_RUNTIME",
+            "ZAFF_RUNTIME_HANDOFF",
         ),
         planned_name="ARCHITECT",
         expanded_name=(
@@ -283,9 +341,9 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
         ),
         notes=(
             "Consumes frozen ORACLE PIC/synthon state and optional SMITH local-SONIC blocks. "
-            "Owns sparse analytic B-prime, Hessian coordinate transformations, ZION fitting, "
-            "quantitative coupling audits and the stable analytic E/G/H "
-            "backend consumed by LINK and SENTINEL."
+            "ARCHITECT owns sparse analytic B-prime, Hessian coordinate transformations, "
+            "ZAFF fitting and quantitative coupling audits. matrix-zaff alone owns the "
+            "stable resident analytic E/G/H runtime consumed by LINK, SENTINEL and MIFUNE."
         ),
     ),
     ToolContract(
@@ -322,10 +380,37 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
         ),
     ),
     ToolContract(
+        key="sentinel",
+        display_name="SENTINEL",
+        current_package="matrix-sentinel",
+        standalone_command="matrix sentinel run request.json response.json --config strategy.json",
+        consumed_artifacts=("matrix.link.sentinel.request.v1",),
+        produced_artifacts=(
+            "matrix.link.sentinel.response.v1",
+            "matrix.sentinel.point_selection.v1",
+        ),
+        owned_capabilities=(
+            "SEQUENTIAL_SCAN_SELECTION",
+            "GENETIC_PES_SELECTION",
+            "MONTE_CARLO_PES_SELECTION",
+            "SAMPLING_CHECKPOINT",
+        ),
+        planned_name="SENTINEL",
+        expanded_name=(
+            "Symmetry-adapted Evolutionary Navigation Through Internal-coordinate "
+            "Nonlinear Energy Landscapes"
+        ),
+        notes=(
+            "Owns PES point order, populations, chains, RNG state and termination. "
+            "LINK owns coordinate realization and E/G/H evaluation."
+        ),
+    ),
+    ToolContract(
         key="trinity",
         display_name="TRINITY",
         current_package="matrix-gf / matrix-dvr / matrix-vpt2-vci",
         standalone_command="matrix gf --xyzin molecule.xyzin; matrix dvr run --xyzin molecule.xyzin",
+        operation_key="trinity",
         required_sections=("BASIC",),
         optional_sections=("GIC", "SYCART", "GF_PED", "DVR", "VPT2_VCI"),
         produced_sections=("GF_PED", "DVR", "VPT2_VCI"),
@@ -333,6 +418,8 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
         consumed_artifacts=("oracle.gic.definition.v1",),
         owned_capabilities=(
             "HARMONIC_GF_PED",
+            "ANHARMONIC_FIELD_CONSTRUCTION",
+            "ARCHITECT_ZAFF_FIELD_PROJECTION",
             "VIBRATIONAL_SCALING",
             "DVR",
             "VPT2_VCI",
@@ -341,9 +428,9 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
         planned_name="TRINITY",
         expanded_name="Torsional and Rovibrational Internal-coordinate Network for Integrated Theoretical spectroscopY",
         notes=(
-            "Umbrella TRINITY state for SONIC-consuming vibrational workflows: harmonic GF/PED, "
-            "curvature improvement, DVR and VPT2/VCI. PES fitting and external geometry "
-            "optimization are owned by LINK, not TRINITY."
+            "Umbrella TRINITY state for molecular vibrational fields: harmonic GF/PED, "
+            "QFF construction from direct QM or ARCHITECT/ZAFF, DVR and VPT2/VCI. "
+            "Geometry optimization is owned by LINK and point selection by SENTINEL."
         ),
     ),
     ToolContract(
@@ -360,7 +447,7 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
         owned_sections=("TRINITY",),
         consumed_artifacts=(
             "oracle.gic.definition.v1",
-            "matrix.zion.force_field.v1",
+            "matrix.zaff.force_field.v1",
         ),
         produced_artifacts=(
             "matrix.link.sentinel.request.v1",
@@ -370,20 +457,19 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
         owned_capabilities=(
             "INTERNAL_TO_CARTESIAN_REALIZATION",
             "GEOMETRY_OPTIMIZATION",
+            "TRANSITION_STATE_OPTIMIZATION",
             "PARTIAL_OPTIMIZATION",
-            "SCAN",
-            "SENTINEL_ORCHESTRATION",
+            "POINT_EVALUATION",
+            "SENTINEL_EVALUATION_BRIDGE",
         ),
         status="prepare-only",
         planned_name="LINK",
         expanded_name="Level-aware Internal-coordinate Network for Kinetics and optimization",
         notes=(
-            "LINK is the SONIC-based layer for geometry optimization, relaxed scans and "
-            "multidimensional PES/property-surface fitting with external electronic-structure "
-            "engines. It is parallel to MORPHEUS: both consume SMITH/SONIC contracts, but "
-            "MORPHEUS fits semiexperimental refinement models while LINK fits electronic-structure "
-            "surfaces, drives external optimizations, and provides reusable coordinate scans "
-            "with finite-difference derivative recovery. The realization API lives in "
+            "LINK is the SONIC-based layer for minimum/TS geometry optimization, coordinate "
+            "realization and E/G/H evaluation with external electronic-structure engines or "
+            "ARCHITECT/ZAFF. SENTINEL owns scan/GA/Monte Carlo point selection and TRINITY owns "
+            "molecular anharmonic-field fitting. The realization API lives in "
             "matrix-link; matrix-trinity command/import aliases remain temporarily for "
             "backward compatibility. SENTINEL proposes SONIC points and never consumes B."
         ),
@@ -476,6 +562,7 @@ TOOL_CONTRACTS: tuple[ToolContract, ...] = (
         display_name="MATRIX desktop",
         current_package="matrix-gui",
         standalone_command="matrix gui [ORACLE|SMITH|LINK|MORPHEUS|TRINITY] [molecule.xyzin]",
+        operation_key="keymaker",
         optional_sections=("BASIC", "GIC", "GF_PED", "MORPHEUS", "TRINITY", "VPT2_VCI", "DVR"),
         status="orchestrator",
         planned_name="MATRIX desktop",
@@ -511,7 +598,7 @@ def tool_contract(key: str) -> ToolContract:
         normalized = "qm_adapters"
     if normalized in {"smith", "smith", "sonic"}:
         normalized = "gicforge"
-    if normalized in {"zion", "force_field", "forcefield"}:
+    if normalized in {"zaff", "force_field", "forcefield"}:
         normalized = "architect"
     # Exact stable keys take precedence over display/planned-name aliases.
     # This matters for the TRINITY umbrella contract, whose planned name is
@@ -585,6 +672,16 @@ def tool_contract_markdown_table(contracts: tuple[ToolContract, ...] | None = No
 def tool_contracts_json(contracts: tuple[ToolContract, ...] | None = None) -> str:
     rows = tool_contracts() if contracts is None else contracts
     return json.dumps([contract.to_dict() for contract in rows], indent=2, sort_keys=True)
+
+
+def nano_matrix_scientific_contract() -> dict[str, object]:
+    """Return the suite-wide parent contract inherited by every tool."""
+
+    return {
+        "schema": NANO_MATRIX_SCIENTIFIC_CONTRACT_SCHEMA,
+        "scope": "all nano-Matrix scientific tools and execution backends",
+        "invariants": [invariant.to_dict() for invariant in NANO_MATRIX_SCIENTIFIC_INVARIANTS],
+    }
 
 
 def xyzin_section_names(path: Path | str) -> tuple[str, ...]:

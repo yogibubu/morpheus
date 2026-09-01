@@ -7,7 +7,7 @@ XYZ file and a TOML isotopologue table accepted by both the CLI and GUI.
 Run one case with:
 
 ```bash
-python -m matrix semiexp \
+matrix semiexp \
   --xyz examples/semiexp/water/parent.xyz \
   --observations examples/semiexp/water/isotopologues.toml \
   --outdir working/examples/water_semiexp
@@ -21,7 +21,7 @@ The phthalic anhydride literature-data case uses a job file because it needs
 weighted reBO primitive-coordinate predicates:
 
 ```bash
-python -m matrix semiexp \
+matrix semiexp \
   --job examples/semiexp/phthalic_anhydride/phthalic_anhydride_predicates.mse.toml \
   --outdir working/semiexp/phthalic_anhydride
 ```
@@ -31,7 +31,7 @@ series. The production comparison fixes the local hydrogen frame because the
 published isotopologues do not substitute H atoms:
 
 ```bash
-python -m matrix semiexp \
+matrix semiexp \
   --job examples/semiexp/succinic_anhydride/succinic_anhydride_fixed_h.mse.toml \
   --outdir working/semiexp/succinic_anhydride_fixed_h
 ```
@@ -44,7 +44,7 @@ reference values.  The ordinary single-molecule fits with all available
 isotopologues are used only as validation references:
 
 ```bash
-python -m matrix semiexp-ensemble \
+matrix semiexp-ensemble \
   --job examples/semiexp/anhydrides_parent_only/anhydrides_parent_only.mse-ensemble.toml \
   --outdir working/semiexp/anhydrides_parent_only
 ```
@@ -62,7 +62,7 @@ hard-constraint comparisons and prior-strength scans, is retained as an
 algorithmic stress test:
 
 ```bash
-python -m matrix semiexp-ensemble-paper \
+matrix semiexp-ensemble-paper \
   --job examples/semiexp/anhydrides_ensemble/anhydrides_ensemble.mse-ensemble.toml \
   --paper-dir doc/papers/ensemble_jpcl \
   --outdir working/semiexp/anhydrides_full_analysis
@@ -71,7 +71,7 @@ python -m matrix semiexp-ensemble-paper \
 Single-structure paper benchmark tables are generated from a checked snapshot:
 
 ```bash
-python -m matrix semiexp-benchmark \
+matrix semiexp-benchmark \
   --snapshot benchmarks/semiexp_msr/golden/semiexp_paper_regression.json \
   --outdir benchmarks/semiexp_msr/generated
 ```
@@ -83,7 +83,7 @@ threshold to define transferable atom types across the two different conformer
 numberings:
 
 ```bash
-python -m matrix semiexp-ensemble \
+matrix semiexp-ensemble \
   --job examples/semiexp/glycine_ensemble/glycine_conformers_synthon.mse-ensemble.toml \
   --outdir working/semiexp/glycine_ensemble_synthon
 ```
@@ -91,7 +91,7 @@ python -m matrix semiexp-ensemble \
 Scan the continuous atom-typing threshold with:
 
 ```bash
-python -m matrix semiexp-ensemble-synthon-scan \
+matrix semiexp-ensemble-synthon-scan \
   --job examples/semiexp/glycine_ensemble/glycine_conformers_synthon.mse-ensemble.toml \
   --outdir working/semiexp/glycine_synthon_threshold_scan_wide \
   --threshold 0.010 --threshold 0.035 --threshold 0.075 \
@@ -102,11 +102,11 @@ Search and use the local `se_geometries` library for reference-assisted
 starting structures with:
 
 ```bash
-python -m matrix multistructure-reference-search \
+matrix multistructure-reference-search \
   --query-xyz path/to/query.xyz \
   --outdir working/multistructure_reference_search/query
 
-python -m matrix multistructure-build-reference-geometry \
+matrix multistructure-build-reference-geometry \
   --query-xyz path/to/query.xyz \
   --outdir working/multistructure_reference_geometry/query
 ```

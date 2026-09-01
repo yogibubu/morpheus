@@ -381,10 +381,6 @@ def _simulation_constants(
     return _required(A, "A_MHz"), _required(B, "B_MHz"), _required(C, "C_MHz")
 
 
-def _with_delta(value: float | None, delta: float | None) -> float | None:
-    if value is None:
-        return None
-    return float(value) + (0.0 if delta is None else float(delta))
 
 
 def _required(value: float | None, label: str) -> float:

@@ -1,9 +1,9 @@
-# MORPHEUS 0.1.0rc6 standalone source snapshot
+# MORPHEUS 0.1.0rc8 standalone source snapshot
 
 This directory is a revision-pinned extraction of the components required to
 build and run MORPHEUS without the private MATRIX development repository.
 
-Source revision: `187ea913261fc8a20b4260b10175b0f37d74c87d`
+Source revision: `5352e8dd924ec04ba1a1f48563f521eaeaf8f574`
 
 ## Build a self-contained release
 
@@ -11,8 +11,8 @@ From this directory, run:
 
 ```bash
 python -m pip install build
-python tools/build_morpheus_release.py /chosen/path/MORPHEUS-0.1.0rc6
-python tools/verify_morpheus_install.py /chosen/path/MORPHEUS-0.1.0rc6
+python tools/build/build_morpheus_release.py /chosen/path/MORPHEUS-0.1.0rc8
+python tools/audit/verify_morpheus_install.py /chosen/path/MORPHEUS-0.1.0rc8
 ```
 
 The builder creates a local wheelhouse, copies the runnable examples and
@@ -25,8 +25,9 @@ For development or inspection, install the packages into a fresh Python 3.11
 environment in the order used by the release builder:
 
 ```bash
-for package in matrix-core matrix-chem matrix-link matrix-fragments matrix-qm \
-  matrix-rovib matrix-engines matrix-gaussian matrix-smith matrix-oracle \
+for package in matrix-core matrix-chem matrix-switch matrix-apoc matrix-link \
+  matrix-numerics matrix-zaff matrix-fragments matrix-qm matrix-rovib \
+  matrix-engines matrix-gaussian matrix-smith matrix-gf matrix-oracle \
   matrix-trinity matrix-morpheus; do
   python -m pip install "./packages/${package}"
 done
@@ -52,6 +53,7 @@ root under `data/camphor/`.
 
 ## Scope
 
-This snapshot includes the source needed by MORPHEUS: CORE, CHEM, LINK,
-FRAGMENTS, QM, ROVIB, ENGINES, GAUSSIAN, SMITH, ORACLE, TRINITY, and MORPHEUS.
+This snapshot includes the source needed by MORPHEUS: CORE, CHEM, SWITCH,
+APOC, LINK, NUMERICS, ZAFF, FRAGMENTS, QM, ROVIB, ENGINES, GAUSSIAN, SMITH,
+GF, ORACLE, TRINITY, and MORPHEUS.
 Unrelated MATRIX applications and private development material are excluded.

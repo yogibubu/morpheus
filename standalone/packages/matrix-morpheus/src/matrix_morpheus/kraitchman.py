@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from matrix_core import kabsch_rotation
+from matrix_chem import kabsch_rotation
 
 from matrix_chem.inertia import center_of_mass, inertia_tensor
 from matrix_chem.isotopes_table import get_default_isotope, get_isotope

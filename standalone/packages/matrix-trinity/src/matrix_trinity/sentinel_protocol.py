@@ -48,11 +48,19 @@ def validate_request(payload: object) -> dict[str, Any]:
         contract.get("pes_exploration"), "coordinate_contract.pes_exploration"
     )
     _const(exploration, "mode", "PES_EXPLORATION")
-    _identifier(exploration.get("retained_group"), "retained_group")
-    if exploration.get("pointwise_oracle_symmetry") is not True:
-        raise ProtocolValidationError("PES exploration requires pointwise ORACLE symmetry")
-    if exploration.get("pointwise_cartesian_symmetrization") is not True:
-        raise ProtocolValidationError("PES exploration requires pointwise Cartesian projection")
+    retained_group = _identifier(exploration.get("retained_group"), "retained_group")
+    pointwise_oracle = exploration.get("pointwise_oracle_symmetry")
+    pointwise_projection = exploration.get("pointwise_cartesian_symmetrization")
+    if not isinstance(pointwise_oracle, bool) or not isinstance(pointwise_projection, bool):
+        raise ProtocolValidationError("pointwise PES policies must be Boolean")
+    if pointwise_oracle is not pointwise_projection:
+        raise ProtocolValidationError(
+            "pointwise Cartesian projection requires pointwise ORACLE symmetry"
+        )
+    if pointwise_oracle is False and retained_group != "C1":
+        raise ProtocolValidationError(
+            "disabling pointwise symmetry is allowed only for independent C1 candidates"
+        )
     if exploration.get("separate_exocyclic_torsions") is not True:
         raise ProtocolValidationError("PES exploration requires separate exocyclic torsions")
     active = _object(contract.get("active_variables"), "coordinate_contract.active_variables")

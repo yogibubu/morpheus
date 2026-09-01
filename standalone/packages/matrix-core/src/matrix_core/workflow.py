@@ -1,6 +1,6 @@
-"""Versioned, GUI-independent workflow contracts for The ONE.
+"""Versioned, GUI-independent workflow contracts for Keymaker.
 
-The ONE is an orchestrator: it selects and monitors scientific steps but never
+Keymaker is an orchestrator: it selects and monitors scientific steps but never
 implements their algorithms.  This module deliberately contains no imports from
 ``matrix_gui`` and no subprocess execution.
 """
@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 from typing import Iterable, Mapping
 
+from .atomic_io import atomic_json_write
 from .tool_contracts import tool_contract
 from .workspace import WorkspaceLayout, ensure_workspace
 
@@ -255,15 +256,15 @@ def _step(
 _ORACLE = _step(
     "oracle_perception", "oracle", "analyze", "Perceive the molecular state",
     required_artifacts=("matrix.input.structure.v1",),
-    produced_sections=("BASIC", "SYMMETRY", "TOPOLOGY", "SYNTHONS", "PRIMITIVES"),
-    produced_artifacts=("matrix.xyz.primitives.v1",),
-    description="Normalize the structure and establish topology, symmetry, synthons and PICs.",
+    produced_sections=("BASIC", "SYMMETRY", "TOPOLOGY", "AROMATICITY", "SYNTHONS", "PRIMITIVES"),
+    produced_artifacts=("matrix.xyz.primitives.v2",),
+    description="Normalize the structure and establish persistent topology, aromaticity, symmetry, synthons and PICs.",
 )
 
 _SMITH = _step(
     "smith_sonic", "gicforge", "build", "Build and inspect SONIC coordinates",
     depends_on=("oracle_perception",), required_sections=("PRIMITIVES",),
-    required_artifacts=("matrix.xyz.primitives.v1",),
+    required_artifacts=("matrix.xyz.primitives.v2",),
     produced_sections=("GIC", "SYCART"),
     produced_artifacts=("oracle.gic.definition.v1", "matrix.smith.sonic_diagnostics.v2"),
     description="Construct local-symmetry SONICs and human-readable coordinate diagnostics.",
@@ -343,6 +344,81 @@ WORKFLOW_RECIPES: tuple[WorkflowRecipe, ...] = (
                produced_artifacts=("matrix.smith.sonic_visualization.v1",))),
     ),
     WorkflowRecipe(
+        "electronic_population_analysis",
+        "APOC electronic analysis",
+        "Normalize a QM wavefunction or density into portable CM5, Mayer and electronic-state contracts.",
+        (
+            "apoc", "cm5", "mayer", "population analysis", "analisi di popolazione",
+            "density matrix", "matrice densità", "natural orbital",
+        ),
+        (
+            _step(
+                "apoc_analyze",
+                "apoc",
+                "analyze",
+                "Normalize density-derived atomic and pair observables",
+                required_artifacts=("matrix.input.qm_electronic_source.v1",),
+                produced_sections=("QM_POPULATION",),
+                produced_artifacts=("matrix.apoc.analysis.v1", "matrix.qm.population.v1"),
+            ),
+            _step(
+                "oracle_reperceive_population",
+                "oracle",
+                "analyze",
+                "Refresh topology and synthons from the APOC contract",
+                depends_on=("apoc_analyze",),
+                required_sections=("QM_POPULATION",),
+                produced_sections=("TOPOLOGY", "SYNTHONS", "PRIMITIVES"),
+                produced_artifacts=("matrix.apoc.perceived_structure.v1",),
+            ),
+        ),
+    ),
+    WorkflowRecipe(
+        "fragment_assembly",
+        "Overlap fragment assembly",
+        "Assemble a target molecule from overlapping library fragments and validate its complete graph.",
+        (
+            "fragment assembly", "overlap assembly", "nano lego", "nano-lego",
+            "assemblaggio frammenti", "lcb25", "lcb26",
+        ),
+        (
+            _step(
+                "fragments_assemble",
+                "fragments",
+                "assemble-overlap",
+                "Assemble and jointly fit the overlapping fragments",
+                required_artifacts=("matrix.input.fragment_assembly.v1",),
+                produced_artifacts=(
+                    "matrix.fragments.assembled_geometry.v1",
+                    "matrix.fragments.assembly_manifest.v1",
+                ),
+            ),
+            _step(
+                "oracle_validate_assembly",
+                "oracle",
+                "analyze",
+                "Perceive and validate the assembled molecular graph",
+                depends_on=("fragments_assemble",),
+                required_artifacts=("matrix.fragments.assembled_geometry.v1",),
+                produced_sections=(
+                    "BASIC", "SYMMETRY", "TOPOLOGY", "AROMATICITY",
+                    "SYNTHONS", "PRIMITIVES",
+                ),
+                produced_artifacts=("matrix.fragments.validated_assembly.v1",),
+            ),
+            _step(
+                "fragments_freeze_contract",
+                "fragments",
+                "build",
+                "Freeze fragment membership, frames and electronic states",
+                depends_on=("oracle_validate_assembly",),
+                required_sections=("TOPOLOGY", "SYNTHONS"),
+                produced_sections=("FRAGMENTS",),
+                produced_artifacts=("matrix.fragments.contract.v1",),
+            ),
+        ),
+    ),
+    WorkflowRecipe(
         "geometry_optimization", "Geometry optimization", "Optimize a molecular structure through LINK with an explicit E/G/H backend.",
         (
             "optimization", "optimize", "ottimizzazione", "ottimizzare", "ottimizza",
@@ -356,21 +432,65 @@ WORKFLOW_RECIPES: tuple[WorkflowRecipe, ...] = (
                confirmation_policy="costly"),
          _step("oracle_reanalyze", "oracle", "analyze", "Re-perceive the optimized structure",
                depends_on=("link_optimize",), required_artifacts=("matrix.link.optimized_structure.v1",),
-               produced_sections=("BASIC", "SYMMETRY", "TOPOLOGY", "SYNTHONS", "PRIMITIVES"),
+               produced_sections=("BASIC", "SYMMETRY", "TOPOLOGY", "AROMATICITY", "SYNTHONS", "PRIMITIVES"),
                produced_artifacts=("matrix.workflow.final_structure.v1",))),
     ),
     WorkflowRecipe(
-        "pes_exploration", "PES scan or exploration", "Let LINK realize SONIC points requested by a scan driver or SENTINEL.",
-        ("pes", "scan", "sentinel", "genetic", "genetico", "exploration", "esplorazione", "conformer"),
+        "ring_reconstruction",
+        "Complete ring reconstruction",
+        "Reconstruct isolated or coupled ring targets and validate the complete molecule.",
+        (
+            "ring reconstruction", "ricostruzione anello", "puckering target",
+            "substituent", "sostituente", "cremer pople",
+        ),
+        (
+            _ORACLE,
+            _step(
+                "smith_detach_substituents",
+                "gicforge",
+                "detach-ring-substituents",
+                "Classify attachments and detach single-anchor components",
+                depends_on=("oracle_perception",),
+                required_sections=("TOPOLOGY",),
+                produced_artifacts=("matrix.smith.ring_substituent_plan.v1",),
+            ),
+            _step(
+                "smith_reconstruct_ring",
+                "gicforge",
+                "reconstruct-ring",
+                "Solve the isolated or coupled ring target and reposition every component",
+                depends_on=("smith_detach_substituents",),
+                required_artifacts=("matrix.smith.ring_substituent_plan.v1",),
+                produced_artifacts=("matrix.smith.complete_ring_reconstruction.v1",),
+            ),
+            _step(
+                "oracle_validate_reconstruction",
+                "oracle",
+                "validate-ring-reconstruction",
+                "Re-perceive the complete graph and enforce the acceptance gates",
+                depends_on=("smith_reconstruct_ring",),
+                required_artifacts=("matrix.smith.complete_ring_reconstruction.v1",),
+                produced_artifacts=("matrix.keymaker.ring_reconstruction.v1",),
+            ),
+        ),
+    ),
+    WorkflowRecipe(
+        "pes_exploration", "PES scan or exploration", "Let SENTINEL select points and LINK realize and evaluate them.",
+        ("pes", "scan", "sentinel", "genetic", "genetico", "monte carlo", "exploration", "esplorazione", "conformer"),
         (_ORACLE, _SMITH,
          _step("link_prepare_exploration", "link", "prepare-external", "Prepare the LINK–SENTINEL exchange",
                depends_on=("smith_sonic",), required_sections=("GIC",),
                produced_artifacts=("matrix.link.sentinel.protocol.v1",)),
-         _step("link_explore", "link", "external-driver", "Run scan or PES exploration",
+         _step("sentinel_select", "sentinel", "run", "Select sequential, genetic or Monte Carlo points",
                depends_on=("link_prepare_exploration",),
                required_artifacts=("matrix.link.sentinel.protocol.v1",),
+               produced_artifacts=("matrix.sentinel.point_selection.v1",),
+               backend=WorkflowBackend(role="next-point", provider="sentinel", execution="external")),
+         _step("link_evaluate_points", "link", "external-driver", "Realize and evaluate SENTINEL points",
+               depends_on=("sentinel_select",),
+               required_artifacts=("matrix.sentinel.point_selection.v1",),
                produced_artifacts=("matrix.link.pes_points.v1",),
-               backend=WorkflowBackend(role="next-point-and-energy", provider="sentinel", execution="external"),
+               backend=WorkflowBackend(role="energy-gradient-hessian", provider="user-select"),
                confirmation_policy="costly")),
     ),
     WorkflowRecipe(
@@ -389,18 +509,48 @@ WORKFLOW_RECIPES: tuple[WorkflowRecipe, ...] = (
                produced_artifacts=("matrix.trinity.gf.v1",))),
     ),
     WorkflowRecipe(
-        "zion_force_field", "ARCHITECT/ZION construction", "Build and validate a ZION force field from QM observables.",
-        ("zion", "architect", "force field", "campo di forza", "hessian", "hessiano", "parametri"),
+        "zaff_force_field", "ARCHITECT/ZAFF construction", "Build and validate a ZAFF force field from QM observables.",
+        ("zaff", "architect", "force field", "campo di forza", "hessian", "hessiano", "parametri"),
         (_ORACLE, _SMITH,
          _step("qm_hessian", "qm_adapters", "hessian", "Calculate and import the QM Hessian",
                depends_on=("smith_sonic",), required_sections=("BASIC",),
                produced_sections=("CARTESIAN_HESSIAN",), produced_artifacts=("matrix.qm.hessian.v1",),
                backend=WorkflowBackend(role="hessian-and-properties", provider="user-select"),
                confirmation_policy="costly"),
-         _step("architect_build", "architect", "build", "Construct and validate ZION",
+         _step("architect_build", "architect", "build", "Construct and validate ZAFF",
                depends_on=("qm_hessian",),
                required_sections=("BASIC", "PRIMITIVES", "SYNTHONS", "CARTESIAN_HESSIAN"),
-               produced_artifacts=("matrix.zion.force_field.v1", "matrix.architect.derivative_validation.v1"))),
+               produced_artifacts=("matrix.zaff.force_field.v1", "matrix.architect.derivative_validation.v1"))),
+    ),
+    WorkflowRecipe(
+        "zaff_library_resolution",
+        "Shared ZAFF library resolution",
+        "Resolve a validated ZAFF field for a molecular state or record the explicit GFN-FF fallback.",
+        (
+            "zaff library", "shared force field", "gfn-ff fallback",
+            "libreria zaff", "riuso campo di forza",
+        ),
+        (
+            _ORACLE,
+            _step(
+                "architect_resolve_library",
+                "architect",
+                "library-resolve",
+                "Resolve the molecular graph and electronic state in the ZAFF library",
+                depends_on=("oracle_perception",),
+                required_sections=("BASIC", "TOPOLOGY"),
+                produced_artifacts=("matrix.zaff.library_resolution.v1",),
+            ),
+            _step(
+                "architect_validate_resolved_field",
+                "architect",
+                "validate",
+                "Validate the selected field or audit the GFN-FF fallback",
+                depends_on=("architect_resolve_library",),
+                required_artifacts=("matrix.zaff.library_resolution.v1",),
+                produced_artifacts=("matrix.zaff.resolved_runtime.v1",),
+            ),
+        ),
     ),
     WorkflowRecipe(
         "semiexperimental_refinement", "MORPHEUS structural refinement", "Fit R0 while one parent L0 Freq=Anharm field is calculated, then obtain isotope-specific curvilinear SONIC DeltaBvib corrections, retain the Cartesian channel for intensities and validation, and refine against an independent high-level reference geometry.",
@@ -411,7 +561,7 @@ WORKFLOW_RECIPES: tuple[WorkflowRecipe, ...] = (
                depends_on=("morpheus_import_experiment",), required_artifacts=("matrix.morpheus.microwave_observations.v1",),
                produced_artifacts=("matrix.morpheus.r0_structure.v1", "matrix.morpheus.r0_diagnostics.v1")),
          _step("oracle_l0", "oracle", "perceive", "Perceive the parent L0 geometry without replacing the independent structural reference",
-               produced_sections=("BASIC", "SYMMETRY", "TOPOLOGY", "SYNTHONS", "PRIMITIVES"),
+               produced_sections=("BASIC", "SYMMETRY", "TOPOLOGY", "AROMATICITY", "SYNTHONS", "PRIMITIVES"),
                produced_artifacts=("matrix.morpheus.l0_perception.v1",)),
          _step("smith_l0_sonic", "gicforge", "build", "Construct the nonredundant SONIC basis used for the curvilinear rovibrational field",
                depends_on=("oracle_l0",), required_sections=("BASIC", "PRIMITIVES"),
@@ -424,7 +574,7 @@ WORKFLOW_RECIPES: tuple[WorkflowRecipe, ...] = (
                required_artifacts=("matrix.qm.parent_anharmonic_force_field.v1", "matrix.morpheus.l0_sonic.v1", "matrix.morpheus.microwave_observations.v1"),
                produced_artifacts=("matrix.morpheus.isotopic_deltavib.v2", "matrix.trinity.vibrational-dual-representation.v1")),
          _step("oracle_reference", "oracle", "prepare-reference", "Prepare the independent PL1/PL2/L2 structural reference; refine L1 to PL1 when requested",
-               produced_sections=("BASIC", "SYMMETRY", "TOPOLOGY", "SYNTHONS", "PRIMITIVES"),
+               produced_sections=("BASIC", "SYMMETRY", "TOPOLOGY", "AROMATICITY", "SYNTHONS", "PRIMITIVES"),
                produced_artifacts=("matrix.morpheus.structural_reference.v1",)),
          _step("smith_reference_sonic", "gicforge", "build", "Construct SONIC on the structural reference geometry",
                depends_on=("oracle_reference",), required_sections=("BASIC", "PRIMITIVES"),
@@ -762,9 +912,10 @@ def workflow_plan_path(workspace: Path | WorkspaceLayout) -> Path:
 
 def write_workflow_plan(plan: WorkflowPlan, workspace: Path | WorkspaceLayout) -> Path:
     path = workflow_plan_path(workspace)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(plan.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    atomic_json_write(path, plan.to_dict())
+    from .state_contract import sync_state_contract
+
+    sync_state_contract(plan, workspace)
     return path
 
 
@@ -781,3 +932,12 @@ def workflow_plan_lines(plan: WorkflowPlan) -> tuple[str, ...]:
         if step.last_error:
             lines.append(f"   Error: {step.last_error}")
     return tuple(lines)
+
+
+def workflow_dry_run(plan: WorkflowPlan) -> dict[str, object]:
+    """Return a side-effect-free dependency/resource preview for Keymaker."""
+
+    steps = []
+    for step in plan.steps:
+        steps.append({"id": step.id, "tool": step.tool, "title": step.title, "depends_on": list(step.depends_on), "resources": asdict(step.resources), "execution": step.backend.execution, "required_paths": list(step.required_artifacts), "produced_paths": list(step.produced_artifacts)})
+    return {"schema": "matrix.keymaker.workflow_dry_run.v1", "project_id": plan.project_id, "recipe_key": plan.recipe_key, "step_count": len(steps), "steps": steps, "execution_side_effects": False}

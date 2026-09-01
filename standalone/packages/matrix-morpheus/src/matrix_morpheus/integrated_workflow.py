@@ -8,7 +8,8 @@ from .contracts import (
     SemiexperimentalFitRequest,
     VibrationalCorrection,
 )
-from .fit import SemiexperimentalFitResult, fit_semiexperimental_geometry
+from .fit import fit_semiexperimental_geometry
+from .models import SemiexperimentalFitResult
 
 
 REFERENCE_GEOMETRY_LEVELS = ("L1", "PL1", "PL2", "L2")
@@ -41,6 +42,94 @@ class R0PreflightResult:
     fit: SemiexperimentalFitResult
     observations: tuple[IsotopologueObservation, ...]
     warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MorpheusDeltaBVibResolution:
+    """Result of the XYZin cache-or-TRINITY prerequisite resolution."""
+
+    observations: tuple[IsotopologueObservation, ...]
+    trinity_invoked: bool
+    calculated_labels: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class TrinityAssistedSemiexperimentalFit:
+    """One SE fit whose missing vibrational corrections were resolved by TRINITY."""
+
+    fit: SemiexperimentalFitResult
+    deltabvib: MorpheusDeltaBVibResolution
+
+
+def resolve_xyzin_deltabvib(
+    xyzin: Path | str,
+    *,
+    trinity_job=None,
+    purpose: str = "semiexperimental-structure",
+) -> MorpheusDeltaBVibResolution:
+    """Reuse complete XYZin corrections or ask TRINITY to fill the missing rows.
+
+    A numerical zero is a valid cached correction; presence is determined from
+    ``DELTAVIB_MHZ`` in each ``#ISOTOPOLOGUES`` record, not from its magnitude.
+    """
+
+    from matrix_chem.isotopologues import read_xyzin_isotopologue_records
+    from matrix_trinity import (
+        CurvilinearIsotopologueDefinition,
+        write_curvilinear_deltabvib_to_xyzin,
+    )
+    from .xyzin_observations import read_xyzin_isotopologues
+
+    target = Path(xyzin)
+    records = read_xyzin_isotopologue_records(target)
+    missing = tuple(record for record in records if record.deltavib_MHz is None)
+    if not missing:
+        return MorpheusDeltaBVibResolution(read_xyzin_isotopologues(target), False)
+    if trinity_job is None:
+        labels = ", ".join(record.label for record in missing)
+        raise ValueError(
+            "XYZin lacks DELTAVIB_MHZ for "
+            f"{labels}; MORPHEUS needs a TRINITY DeltaBvib job to continue"
+        )
+    definitions = tuple(
+        CurvilinearIsotopologueDefinition(
+            label=record.label,
+            substitutions=dict(record.substitutions),
+        )
+        for record in missing
+    )
+    results = trinity_job.calculate(definitions, purpose=purpose)
+    if {row.label for row in results} != {record.label for record in missing}:
+        raise ValueError("TRINITY did not return every missing XYZin DeltaBvib correction")
+    write_curvilinear_deltabvib_to_xyzin(target, results)
+    return MorpheusDeltaBVibResolution(
+        read_xyzin_isotopologues(target),
+        True,
+        tuple(record.label for record in missing),
+    )
+
+
+def fit_semiexperimental_with_trinity(
+    request: SemiexperimentalFitRequest,
+    *,
+    xyzin: Path | str,
+    trinity_job=None,
+    purpose: str = "semiexperimental-structure",
+    **fit_options,
+) -> TrinityAssistedSemiexperimentalFit:
+    """Resolve DeltaBvib through XYZin/TRINITY and then execute the MORPHEUS fit."""
+
+    resolved = resolve_xyzin_deltabvib(
+        xyzin,
+        trinity_job=trinity_job,
+        purpose=purpose,
+    )
+    fit_request = replace(request, observations=resolved.observations)
+    fit_request.validate()
+    return TrinityAssistedSemiexperimentalFit(
+        fit_semiexperimental_geometry(fit_request, **fit_options),
+        resolved,
+    )
 
 
 def fit_ground_state_r0_geometry(
@@ -110,8 +199,12 @@ def prepare_structural_reference(
 
 __all__ = [
     "MorpheusGeometryLevels",
+    "MorpheusDeltaBVibResolution",
     "REFERENCE_GEOMETRY_LEVELS",
     "R0PreflightResult",
+    "TrinityAssistedSemiexperimentalFit",
+    "fit_semiexperimental_with_trinity",
     "fit_ground_state_r0_geometry",
     "prepare_structural_reference",
+    "resolve_xyzin_deltabvib",
 ]

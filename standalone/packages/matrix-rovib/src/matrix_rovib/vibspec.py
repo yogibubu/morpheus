@@ -78,6 +78,23 @@ class HybridVibrationalSpectrumResult:
 
 
 @dataclass(frozen=True)
+class DegenerateModeBlock:
+    level1_modes: tuple[int, ...]
+    level2_modes: tuple[int, ...]
+    principal_overlaps: tuple[float, ...]
+    procrustes_rotation: np.ndarray
+    ambiguous: bool
+
+
+@dataclass(frozen=True)
+class RobustModeMatchResult:
+    matches: tuple[tuple[int, int, float], ...]
+    blocks: tuple[DegenerateModeBlock, ...]
+    minimum_principal_overlap: float
+    ambiguity_rejected: bool
+
+
+@dataclass(frozen=True)
 class NISTIRPoint:
     wavenumber_cm1: float
     value: float
@@ -314,6 +331,96 @@ def match_normal_modes(
         )
         raise ValueError(f"normal-mode correspondence below threshold: {text}")
     return matches
+
+
+def match_normal_modes_robust(
+    level1_modes: np.ndarray,
+    level2_modes: np.ndarray,
+    level1_frequencies_cm1: tuple[float, ...] | list[float] | np.ndarray,
+    *,
+    degeneracy_tolerance_cm1: float = 5.0,
+    min_principal_overlap: float = 0.70,
+) -> RobustModeMatchResult:
+    """Match modes with Procrustes alignment inside quasi-degenerate subspaces."""
+
+    first = _normalized_mode_rows(level1_modes)
+    second = _normalized_mode_rows(level2_modes)
+    frequencies = np.asarray(level1_frequencies_cm1, dtype=float)
+    if first.shape != second.shape or frequencies.shape != (first.shape[0],):
+        raise ValueError("robust mode matching requires equal mode shapes and one L1 frequency per mode")
+    if degeneracy_tolerance_cm1 < 0.0 or not 0.0 <= min_principal_overlap <= 1.0:
+        raise ValueError("invalid degeneracy or principal-overlap threshold")
+
+    raw = np.abs(first @ second.T)
+    rows, cols = _linear_sum_assignment(-raw)
+    initial = {int(row): int(col) for row, col in zip(rows, cols)}
+    blocks: list[DegenerateModeBlock] = []
+    matches: list[tuple[int, int, float]] = []
+    minimum = 1.0
+    rejected = False
+    for indices in _frequency_blocks(frequencies, float(degeneracy_tolerance_cm1)):
+        mapped = tuple(initial[index] for index in indices)
+        first_block = first[np.asarray(indices)]
+        second_block = second[np.asarray(mapped)]
+        cross = first_block @ second_block.T
+        left, singular, right_t = np.linalg.svd(cross, full_matrices=False)
+        rotation = left @ right_t
+        rotated = rotation @ second_block
+        aligned_overlap = np.abs(first_block @ rotated.T)
+        local_rows, local_cols = _linear_sum_assignment(-aligned_overlap)
+        block_minimum = float(np.min(singular)) if singular.size else 0.0
+        minimum = min(minimum, block_minimum)
+        ambiguous = block_minimum < min_principal_overlap
+        rejected = rejected or ambiguous
+        for local_row, local_col in zip(local_rows, local_cols):
+            matches.append(
+                (
+                    indices[int(local_row)] + 1,
+                    mapped[int(local_col)] + 1,
+                    float(aligned_overlap[local_row, local_col]),
+                )
+            )
+        blocks.append(
+            DegenerateModeBlock(
+                level1_modes=tuple(index + 1 for index in indices),
+                level2_modes=tuple(index + 1 for index in mapped),
+                principal_overlaps=tuple(float(value) for value in singular),
+                procrustes_rotation=rotation,
+                ambiguous=ambiguous,
+            )
+        )
+    if rejected:
+        bad = [
+            "/".join(str(value) for value in block.level1_modes)
+            for block in blocks
+            if block.ambiguous
+        ]
+        raise ValueError(
+            "normal-mode subspace correspondence below threshold for L1 block(s): "
+            + ", ".join(bad)
+        )
+    return RobustModeMatchResult(
+        matches=tuple(sorted(matches)),
+        blocks=tuple(blocks),
+        minimum_principal_overlap=minimum,
+        ambiguity_rejected=False,
+    )
+
+
+def _frequency_blocks(frequencies: np.ndarray, tolerance: float) -> tuple[tuple[int, ...], ...]:
+    order = np.argsort(frequencies)
+    blocks: list[list[int]] = []
+    for raw_index in order:
+        index = int(raw_index)
+        if not blocks:
+            blocks.append([index])
+            continue
+        previous = blocks[-1][-1]
+        if abs(float(frequencies[index] - frequencies[previous])) <= tolerance:
+            blocks[-1].append(index)
+        else:
+            blocks.append([index])
+    return tuple(tuple(sorted(block)) for block in blocks)
 
 
 def hybrid_vibrational_section_from_sections(

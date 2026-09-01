@@ -1,4 +1,4 @@
-"""Typed intent boundary for The ONE.
+"""Typed intent boundary for Keymaker.
 
 Natural language may propose a workflow, but it never authorizes or executes
 one.  This module deliberately depends only on the deterministic workflow
@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 from typing import Mapping, Protocol
 
+from .atomic_io import atomic_json_write
 from .workflow import (
     WorkflowPlan,
     WorkflowRecommendation,
@@ -23,8 +24,8 @@ from .workflow import (
 from .workspace import WorkspaceLayout, ensure_workspace
 
 
-INTENT_SCHEMA = "matrix.the_one.intent.v1"
-INTENT_STATE_FILENAME = "the-one-intent.json"
+INTENT_SCHEMA = "matrix.keymaker.intent.v1"
+INTENT_STATE_FILENAME = "keymaker-intent.json"
 INTENT_STATUSES = ("ready", "needs_clarification", "unsupported")
 DETERMINISTIC_COMPILER_ID = "matrix.deterministic-intent.v1"
 DETERMINISTIC_LANGUAGE_COMPILER_ID = "matrix.deterministic-language-intent.v1"
@@ -626,7 +627,7 @@ def _request_from_language(text: str) -> IntentRequest:
         desired = "Harmonic frequencies and normal modes"
     elif re.search(r"\b(?:sonic|internal coordinates?|coordinate interne)\b", lowered):
         desired = "A human-readable nonredundant internal-coordinate definition"
-    elif re.search(r"\b(?:force field|campo di forza|zion)\b", lowered):
+    elif re.search(r"\b(?:force field|campo di forza|zaff)\b", lowered):
         desired = "A validated force field"
     elif re.search(r"\b(?:scan|pes|potential energy surface)\b", lowered):
         desired = "A validated set of potential-energy-surface points"
@@ -735,12 +736,7 @@ def write_intent_compilation(
     workspace: Path | WorkspaceLayout,
 ) -> Path:
     path = intent_compilation_path(workspace)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(compilation.to_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+    atomic_json_write(path, compilation.to_dict())
     return path
 
 

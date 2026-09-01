@@ -7,7 +7,8 @@ import numpy as np
 
 from matrix_chem import Phy, Structure, get_physical_constants, read_enriched_xyz
 from matrix_chem.rotational import rotational_info
-from matrix_core import eigh_arrays, has_section
+from matrix_core import has_section
+from matrix_numerics import eigh_arrays
 from matrix_rovib.contracts import VibrationalSection, write_vibrational_section
 
 

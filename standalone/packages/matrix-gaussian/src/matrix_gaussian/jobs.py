@@ -3,8 +3,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
 import subprocess
 import time
+
+from matrix_core import (
+    CalculationLaunchAuthorization,
+    CalculationLaunchError,
+    CalculationLaunchPlan,
+    CalculationResources,
+    authorized_parent_plan_from_environment,
+    build_calculation_launch_plan,
+    require_calculation_launch_or_parent_authorization,
+    read_sectioned_lines,
+    section_content,
+)
+
+from .route_policy import (
+    GaussianRouteOverride,
+    GaussianRoutePolicyError,
+    gaussian_route_digest,
+    gaussian_route_violations,
+    validate_gaussian_route_policy,
+)
 
 
 GAUSSIAN_EXECUTABLE = "gdv"
@@ -101,11 +122,13 @@ def gaussian_has_error_termination(log_path: Path) -> bool:
 def gaussian_completion_message(workdir: Path, exit_code: int) -> tuple[bool, str]:
     """Return `(success, message)` for a finished Gaussian process."""
     log_path = select_latest_log(workdir)
+    if exit_code != 0 or gaussian_has_error_termination(log_path):
+        return False, f"Gaussian finished with errors (exit_code={exit_code}; see {log_path.name})"
     if gaussian_completed_normally(log_path):
         return True, "Gaussian completed successfully"
-    if exit_code == 0 and log_path.exists() and not gaussian_has_error_termination(log_path):
+    if log_path.exists():
         return True, f"Gaussian completed (check {log_path.name})"
-    return False, f"Gaussian finished with errors (exit_code={exit_code}; see {log_path.name})"
+    return False, f"Gaussian produced no log (exit_code={exit_code})"
 
 
 def gaussian_job_status(workdir: Path) -> GaussianJobStatus:
@@ -116,15 +139,15 @@ def gaussian_job_status(workdir: Path) -> GaussianJobStatus:
     running = pid is not None and _pid_is_running(pid)
     normal = gaussian_completed_normally(log_path)
     error = gaussian_has_error_termination(log_path)
-    if normal:
+    if error:
+        status = "failed"
+        message = "Gaussian error termination detected"
+    elif normal:
         status = "completed"
         message = "Gaussian normal termination detected"
     elif running:
         status = "running"
         message = f"Gaussian process appears to be running (pid={pid})"
-    elif error:
-        status = "failed"
-        message = "Gaussian error termination detected"
     elif log_path.exists():
         status = "unknown"
         message = f"Gaussian log exists without termination marker: {log_path.name}"
@@ -154,6 +177,9 @@ def run_gaussian_job(
     background: bool = False,
     timeout: float | None = None,
     env: dict[str, str] | None = None,
+    route_overrides: tuple[GaussianRouteOverride, ...] = (),
+    resources: CalculationResources | None = None,
+    launch_authorization: CalculationLaunchAuthorization | None = None,
 ) -> GaussianRunResult:
     """Run Gaussian from an ORACLE work directory.
 
@@ -167,11 +193,31 @@ def run_gaussian_job(
         gauin = workdir / gauin
     if not gauin.exists():
         raise GaussianInputError(f"Gaussian input not found: {gauin}")
+    validate_gaussian_input_route_policy(gauin, route_overrides=route_overrides)
     cmd = [executable, str(gauin)]
     log_path = select_latest_log(workdir)
     run_env = os.environ.copy()
     if env:
         run_env.update(env)
+    parent = authorized_parent_plan_from_environment(run_env)
+    effective_resources = resources or (None if parent is None else parent.resources)
+    if effective_resources is None:
+        raise CalculationLaunchError(
+            "Gaussian launch requires explicit process, thread, and memory limits"
+        )
+    launch_plan = build_calculation_launch_plan(
+        backend="Gaussian",
+        host=parent.host if parent is not None else None,
+        workdir=workdir,
+        input_path=gauin,
+        command=cmd,
+        resources=effective_resources,
+    )
+    require_calculation_launch_or_parent_authorization(
+        launch_plan,
+        launch_authorization,
+        environment=run_env,
+    )
     if background:
         process = subprocess.Popen(cmd, cwd=workdir, env=run_env)
         (workdir / PID_FILE).write_text(str(process.pid) + "\n", encoding="utf-8")
@@ -198,6 +244,232 @@ def run_gaussian_job(
         success=success,
         message=message,
     )
+
+
+def prepare_gaussian_launch_plan(
+    workdir: Path,
+    *,
+    resources: CalculationResources,
+    executable: str | None = None,
+    input_path: Path | None = None,
+    env: dict[str, str] | None = None,
+    route_overrides: tuple[GaussianRouteOverride, ...] = (),
+    host: str | None = None,
+) -> CalculationLaunchPlan:
+    """Prepare and validate the exact Gaussian launch without executing it."""
+
+    target = Path(workdir).resolve()
+    selected_executable = (
+        executable
+        or (env or {}).get("ORACLE_GAUSSIAN_EXE")
+        or os.environ.get("ORACLE_GAUSSIAN_EXE")
+        or GAUSSIAN_EXECUTABLE
+    )
+    gauin = Path(input_path) if input_path is not None else ensure_gjf_input(target)
+    if not gauin.is_absolute():
+        gauin = target / gauin
+    if not gauin.exists():
+        raise GaussianInputError(f"Gaussian input not found: {gauin}")
+    validate_gaussian_input_route_policy(gauin, route_overrides=route_overrides)
+    return build_calculation_launch_plan(
+        backend="Gaussian",
+        host=host,
+        workdir=target,
+        input_path=gauin,
+        command=(selected_executable, str(gauin)),
+        resources=resources,
+    )
+
+
+def gaussian_input_routes(input_path: Path) -> tuple[str, ...]:
+    """Extract every route section from a Gaussian input, including Link1 jobs."""
+
+    path = Path(input_path)
+    if not path.exists():
+        raise GaussianInputError(f"Gaussian input not found: {path}")
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    routes: list[str] = []
+    index = 0
+    while index < len(lines):
+        if not lines[index].lstrip().startswith("#"):
+            index += 1
+            continue
+        route_lines = [lines[index].strip()]
+        index += 1
+        while index < len(lines) and lines[index].strip():
+            if lines[index].strip().lower() == "--link1--":
+                break
+            route_lines.append(lines[index].strip())
+            index += 1
+        routes.append(" ".join(" ".join(route_lines).split()))
+    if not routes:
+        raise GaussianInputError(f"Gaussian input has no route section: {path}")
+    return tuple(routes)
+
+
+def validate_gaussian_input_route_policy(
+    input_path: Path,
+    *,
+    route_overrides: tuple[GaussianRouteOverride, ...] = (),
+) -> tuple[str, ...]:
+    """Enforce the frozen route policy immediately before Gaussian execution."""
+
+    routes = gaussian_input_routes(input_path)
+    overrides_by_digest = {override.route_sha256: override for override in route_overrides}
+    used_digests: set[str] = set()
+    for route in routes:
+        violations = gaussian_route_violations(route)
+        override = None
+        if violations:
+            digest = gaussian_route_digest(route)
+            override = overrides_by_digest.get(digest)
+            if override is not None:
+                used_digests.add(digest)
+        validate_gaussian_route_policy(route, override=override)
+    unused = set(overrides_by_digest) - used_digests
+    if unused:
+        raise GaussianRoutePolicyError(
+            "Gaussian launcher received route overrides that do not match any "
+            "forbidden route in the exact input"
+        )
+    return routes
+
+
+def validate_gaussian_readallgic_input(
+    input_path: Path,
+    *,
+    reference_xyzin: Path | None = None,
+    g16_compatibility: bool = False,
+) -> tuple[str, ...]:
+    """Fail closed on a final ReadAllGIC input immediately before execution.
+
+    This is the execution-side counterpart of the canonical MATRIX writer.  It
+    rejects hand-edited or partially serialized GIC blocks whose ``Value=``
+    fields do not reproduce the Cartesian input in Gaussian's native units.
+    """
+
+    target = Path(input_path)
+    routes = validate_gaussian_input_route_policy(target)
+    if not any("readallgic" in route.casefold() for route in routes):
+        return routes
+
+    from .parsers import _read_gaussian_input_block, read_gaussian_cartesian_input
+    from .writers import (
+        DEFAULT_GAUSSIAN_GIC_MAX_ADDENDS,
+        DEFAULT_GAUSSIAN_GIC_MAX_LABEL_LENGTH,
+        GaussianWriteError,
+        _gaussian_base_label,
+        _gaussian_compact_transport_labels,
+        _gaussian_definition,
+        _gaussian_factor_long_gic_lines,
+        _gaussian_gic_lines,
+        _gaussian_gic_lines_with_values,
+        _gaussian_native_inactive_improper_helpers,
+        validate_gaussian_geometry_identity,
+    )
+
+    block = _read_gaussian_input_block(target)
+    gic_lines: list[str] = []
+    for raw_line in block.tail_lines:
+        line = raw_line.strip()
+        if not line:
+            if gic_lines:
+                break
+            continue
+        if _gaussian_definition(line) is None:
+            raise GaussianInputError(
+                f"ReadAllGIC input contains a non-definition row in its GIC block: {line}"
+            )
+        gic_lines.append(line)
+    if not gic_lines:
+        raise GaussianInputError("ReadAllGIC route requires a non-empty GIC block")
+    for line in gic_lines:
+        parsed = _gaussian_definition(line)
+        assert parsed is not None
+        label, expression = parsed
+        fragment_match = re.fullmatch(
+            r"\s*Fragment\s*\(([^()]*)\)\s*",
+            expression,
+            flags=re.IGNORECASE,
+        )
+        if fragment_match is not None and not fragment_match.group(1).strip():
+            raise GaussianInputError(
+                "ReadAllGIC input contains an empty Gaussian Fragment declaration: "
+                f"{label}"
+            )
+
+    geometry = read_gaussian_cartesian_input(target)
+    if reference_xyzin is not None:
+        from matrix_chem import read_enriched_xyz
+
+        reference = read_enriched_xyz(Path(reference_xyzin))
+        try:
+            validate_gaussian_geometry_identity(
+                target,
+                reference.atoms,
+                reference.coordinates_angstrom,
+            )
+        except GaussianWriteError as exc:
+            raise GaussianInputError(str(exc)) from exc
+        if section_content(read_sectioned_lines(Path(reference_xyzin)), "GIC"):
+            try:
+                from matrix_smith.definition import (
+                    read_gic_definition_from_xyzin,
+                    validate_frozen_sonic_basis,
+                )
+
+                definition = read_gic_definition_from_xyzin(Path(reference_xyzin))
+                validate_frozen_sonic_basis(definition, rank_tolerance=1.0e-7)
+            except (ValueError, RuntimeError) as exc:
+                raise GaussianInputError(
+                    f"ReadAllGIC reference fails the frozen SMITH basis gate: {exc}"
+                ) from exc
+    try:
+        canonical = _gaussian_gic_lines_with_values(
+            gic_lines,
+            geometry.coordinates_angstrom,
+        )
+    except GaussianWriteError as exc:
+        raise GaussianInputError(str(exc)) from exc
+    if canonical != gic_lines:
+        raise GaussianInputError(
+            "ReadAllGIC input is not a finalized MATRIX serialization: "
+            "required Value= fields are missing or non-canonical"
+        )
+    if reference_xyzin is not None and not g16_compatibility:
+        expected = _gaussian_gic_lines(Path(reference_xyzin))
+        expected = _gaussian_native_inactive_improper_helpers(expected)
+        expected = _gaussian_compact_transport_labels(expected)
+        expected = _gaussian_gic_lines_with_values(
+            expected,
+            geometry.coordinates_angstrom,
+        )
+        expected = _gaussian_factor_long_gic_lines(
+            expected,
+            max_addends=DEFAULT_GAUSSIAN_GIC_MAX_ADDENDS,
+        )
+        if expected != gic_lines:
+            raise GaussianInputError(
+                "ReadAllGIC block is not the canonical native serialization of "
+                "the frozen SMITH chart"
+            )
+
+    labels = [
+        _gaussian_base_label(_gaussian_definition(line)[0])
+        for line in gic_lines
+    ]
+    if len(labels) != len(set(labels)):
+        raise GaussianInputError("ReadAllGIC input contains duplicate GIC labels")
+    overlong = tuple(
+        label for label in labels if len(label) > DEFAULT_GAUSSIAN_GIC_MAX_LABEL_LENGTH
+    )
+    if overlong:
+        raise GaussianInputError(
+            "ReadAllGIC input contains transport labels beyond the canonical "
+            f"{DEFAULT_GAUSSIAN_GIC_MAX_LABEL_LENGTH}-character capacity: "
+            + ",".join(overlong)
+        )
+    return routes
 
 
 def formchk_checkpoint(

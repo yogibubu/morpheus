@@ -48,6 +48,7 @@
         "name": {"type": "string", "minLength": 1},
         "host": {"type": "string", "minLength": 1},
         "remote_root": {"type": "string", "minLength": 1},
+        "qm_root": {"type": "string", "minLength": 1},
         "enabled": {"type": "boolean"},
         "limits": {"$ref": "#/$defs/limits"},
         "engines": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},

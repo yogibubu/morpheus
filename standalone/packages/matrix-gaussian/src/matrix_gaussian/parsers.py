@@ -7,14 +7,26 @@ import re
 
 import numpy as np
 
+
 from matrix_chem import MolecularGeometry, atomic_mass
 from matrix_chem.geometry_io import GeometryParseError, normalize_atom_symbol
 from matrix_chem.topology.elements import atomic_number
 from matrix_chem.zmatrix import parse_zmatrix_text, zmatrix_to_geometry
 
+from .archive import archive_cartesian_hessian
+
 
 ANGSTROM_TO_BOHR = 1.0 / 0.52917721092
 SCF_RE = re.compile(r"SCF Done:\s+E\([^)]+\)\s+=\s+([-+]?\d+\.\d+)")
+MP2_ENERGY_RE = re.compile(
+    r"\bEUMP2\s*=\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[DEde][-+]?\d+)?)",
+    flags=re.IGNORECASE,
+)
+DOUBLE_HYBRID_ENERGY_RE = re.compile(
+    r"^\s*E2\([^)]+\)\s*=.*?\bE\([^)]+\)\s*=\s*"
+    r"([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[DEde][-+]?\d+)?)",
+    flags=re.IGNORECASE | re.MULTILINE,
+)
 EXCITED_TOTAL_ENERGY_RE = re.compile(
     r"Total Energy,\s*E\((?:EOM-CCSD|TD-HF/TD-DFT|CIS/TDA|CIS\(D\))\)\s*=\s*"
     r"([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[DEde][-+]?\d+)?)",
@@ -34,6 +46,10 @@ POINT_GROUP_RE = re.compile(r"Full point group\s+(\S+)", flags=re.IGNORECASE)
 RANK_RE = re.compile(r"NTRed=\s*(\d+).*?NRank=\s*(\d+)", flags=re.IGNORECASE)
 NIMAG_RE = re.compile(r"N\s*Imag\s*=\s*(\d+)", flags=re.IGNORECASE)
 READALLGIC_RE = re.compile(r"\breadallgic\b", flags=re.IGNORECASE)
+OPTIMIZATION_STEP_RE = re.compile(
+    r"^\s*Step\s+number\s+\d+\s+out\s+of\s+a\s+maximum\s+of\s+\d+",
+    flags=re.IGNORECASE | re.MULTILINE,
+)
 PARAMETER_LINE_RE = re.compile(r"^\s*!\s*(?P<label>\S+)\s+(?P<body>.*?)\s*!\s*$")
 THERMOCHEMISTRY_MASS_RE = re.compile(
     r"Atom\s+(?P<index>\d+)\s+has atomic number\s+(?P<number>\d+)\s+and mass\s+"
@@ -50,6 +66,7 @@ class GaussianLogSummary:
     input_orientation_count: int
     scan_marker_count: int
     puckering_marker_count: int
+    optimization_steps: int = 0
     frequencies_cm: tuple[float, ...] = ()
     last_orientation: MolecularGeometry | None = None
 
@@ -101,6 +118,7 @@ class GaussianLogNormalModes:
     frequencies_cm: np.ndarray
     modes: np.ndarray
     source_frame: str
+    irreps: tuple[str, ...] = ()
     rotated_to_archive_axes: bool = False
 
 
@@ -224,6 +242,7 @@ def summarize_gaussian_log(path: Path) -> GaussianLogSummary:
         input_orientation_count=text.count(INPUT_ORIENTATION),
         scan_marker_count=text.lower().count("scan"),
         puckering_marker_count=text.count("QPck") + text.count("PhiP") + text.count("RPck"),
+        optimization_steps=len(OPTIMIZATION_STEP_RE.findall(text)),
         frequencies_cm=tuple(_parse_frequencies(text)),
         last_orientation=orientation,
     )
@@ -337,6 +356,15 @@ def _parse_last_point_energy(text: str) -> float | None:
     ]
     if excited:
         return excited[-1]
+    double_hybrid = [
+        _float_token(match.group(1))
+        for match in DOUBLE_HYBRID_ENERGY_RE.finditer(text)
+    ]
+    if double_hybrid:
+        return double_hybrid[-1]
+    mp2 = [_float_token(match.group(1)) for match in MP2_ENERGY_RE.finditer(text)]
+    if mp2:
+        return mp2[-1]
     scf = [float(match.group(1)) for match in SCF_RE.finditer(text)]
     if scf:
         return scf[-1]
@@ -407,14 +435,16 @@ def read_gaussian_log_geometry(path: Path) -> MolecularGeometry:
 
 
 def read_gaussian_log_cartesian_hessian(path: Path) -> np.ndarray:
-    """Read the last printed Gaussian Cartesian force-constant matrix."""
+    """Read the last Gaussian Cartesian force-constant matrix."""
     target = Path(path)
     text = target.read_text(encoding="utf-8", errors="replace")
     summary = summarize_gaussian_log(target)
     geometry = _parse_last_archive_geometry(text, source_path=target) or summary.last_orientation
     if geometry is None:
         raise GeometryParseError("Gaussian log contains no readable orientation block")
-    return _parse_last_cartesian_hessian(text.splitlines(), size=3 * geometry.natoms)
+    return _parse_last_cartesian_hessian(
+        text.splitlines(), size=3 * geometry.natoms, archive_text=text
+    )
 
 
 def read_gaussian_log_normal_modes(path: Path) -> GaussianLogNormalModes:
@@ -426,7 +456,9 @@ def read_gaussian_log_normal_modes(path: Path) -> GaussianLogNormalModes:
     geometry = _parse_last_archive_geometry(text, source_path=target) or summary.last_orientation
     if geometry is None:
         raise GeometryParseError("Gaussian log contains no readable orientation block")
-    frequencies, modes = _parse_last_normal_coordinate_table(lines, natoms=geometry.natoms)
+    frequencies, modes, irreps = _parse_last_normal_coordinate_table(
+        lines, natoms=geometry.natoms
+    )
     source_frame = "gaussian-log-normal-coordinate-frame"
     rotated = False
     archive = _parse_last_archive_geometry(text, source_path=target)
@@ -443,6 +475,7 @@ def read_gaussian_log_normal_modes(path: Path) -> GaussianLogNormalModes:
         frequencies_cm=frequencies,
         modes=modes,
         source_frame=source_frame,
+        irreps=irreps,
         rotated_to_archive_axes=rotated,
     )
 
@@ -459,7 +492,9 @@ def hessian_input_from_gaussian_log(path: Path):
         raise GeometryParseError("Gaussian log contains no readable orientation block")
     numbers = np.asarray(_atomic_numbers_from_geometry(geometry), dtype=int)
     masses = np.asarray(_masses_from_gaussian_log(text, numbers), dtype=float)
-    hessian = _parse_last_cartesian_hessian(text.splitlines(), size=3 * geometry.natoms)
+    hessian = _parse_last_cartesian_hessian(
+        text.splitlines(), size=3 * geometry.natoms, archive_text=text
+    )
     data = HessianInput(
         atomic_numbers=numbers,
         cartesian_coordinates_bohr=np.asarray(geometry.coordinates_angstrom, dtype=float)
@@ -509,21 +544,28 @@ def promote_gaussian_log_hessian_to_xyzin(
     )
     wrote_normal_modes = False
     if write_normal_modes:
-        try:
-            normal_modes = read_gaussian_log_normal_modes(source)
-        except GeometryParseError:
-            normal_modes = None
-        if normal_modes is not None and normal_modes.modes.size:
-            write_normal_modes_section(
-                target,
-                normal_modes_section_from_arrays(
-                    normal_modes.frequencies_cm,
-                    normal_modes.modes,
-                    source=f"gaussian-log {source}; {normal_modes.source_frame}",
-                    coordinate_count=data.cartesian_coordinates_bohr.size,
-                ),
-            )
-            wrote_normal_modes = True
+        from matrix_qm import cartesian_normal_modes_from_hessian
+
+        # Printed Gaussian normal coordinates are rounded for display and are
+        # not a sufficiently accurate source for the strict mass-weighted
+        # protocol.  A log promotion already requires the Cartesian Hessian,
+        # so derive the canonical modes from that unrounded tensor instead.
+        canonical_modes = cartesian_normal_modes_from_hessian(
+            data.cartesian_hessian,
+            data.masses_amu,
+            data.cartesian_coordinates_bohr,
+            source=f"gaussian-log Hessian {source}",
+        )
+        write_normal_modes_section(
+            target,
+            normal_modes_section_from_arrays(
+                canonical_modes.frequencies_cm,
+                canonical_modes.mass_weighted_modes,
+                source=f"gaussian-log Hessian {source}; matrix.link.mass_weighted_normal_modes.v1",
+                coordinate_count=data.cartesian_coordinates_bohr.size,
+            ),
+        )
+        wrote_normal_modes = True
     return GaussianLogHessianPromotion(
         xyzin=target,
         log_path=source,
@@ -730,13 +772,22 @@ def _parse_last_nimag(text: str) -> int | None:
     return int(matches[-1].group(1))
 
 
-def _parse_last_cartesian_hessian(lines: list[str], *, size: int) -> np.ndarray:
+def _parse_last_cartesian_hessian(
+    lines: list[str], *, size: int, archive_text: str | None = None
+) -> np.ndarray:
     starts = [
         idx for idx, line in enumerate(lines) if "Force constants in Cartesian coordinates" in line
     ]
-    if not starts:
-        raise GeometryParseError("Gaussian log contains no Cartesian force-constant matrix")
-    return _parse_cartesian_hessian_block(lines[starts[-1] + 1 :], size=size)
+    if starts:
+        return _parse_cartesian_hessian_block(lines[starts[-1] + 1 :], size=size)
+    if archive_text is not None:
+        try:
+            return archive_cartesian_hessian(archive_text, size=size)
+        except ValueError as exc:
+            raise GeometryParseError(
+                "Gaussian log contains no readable Cartesian force-constant matrix"
+            ) from exc
+    raise GeometryParseError("Gaussian log contains no Cartesian force-constant matrix")
 
 
 def _parse_cartesian_hessian_block(lines: list[str], *, size: int) -> np.ndarray:
@@ -785,13 +836,14 @@ def _parse_last_normal_coordinate_table(
     lines: list[str],
     *,
     natoms: int,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, tuple[str, ...]]:
     starts = [idx for idx, line in enumerate(lines) if "and normal coordinates:" in line]
     if not starts:
         raise GeometryParseError("Gaussian log contains no printed normal-coordinate table")
     start = starts[-1] + 1
     frequencies: list[float] = []
     modes: list[np.ndarray] = []
+    irreps: list[str] = []
     idx = start
     while idx < len(lines):
         line = lines[idx]
@@ -805,6 +857,13 @@ def _parse_last_normal_coordinate_table(
         if block_width == 0:
             idx += 1
             continue
+        symmetry_tokens = lines[idx - 1].split() if idx > start else []
+        if len(symmetry_tokens) == block_width and not all(
+            token.isdigit() for token in symmetry_tokens
+        ):
+            irreps.extend(token.replace('"', "''") for token in symmetry_tokens)
+        else:
+            irreps.extend("" for _ in range(block_width))
         header = idx + 1
         while header < len(lines) and not lines[header].lstrip().startswith("Atom  AN"):
             if "Frequencies --" in lines[header] or lines[header].strip().startswith(
@@ -837,7 +896,7 @@ def _parse_last_normal_coordinate_table(
         idx = header + 1 + natoms
     if not modes:
         raise GeometryParseError("Gaussian log contains no readable normal coordinates")
-    return np.asarray(frequencies, dtype=float), np.vstack(modes)
+    return np.asarray(frequencies, dtype=float), np.vstack(modes), tuple(irreps)
 
 
 def _orthogonal_map_between_geometries(
@@ -915,7 +974,10 @@ def _parse_last_archive_geometry(text: str, *, source_path: Path) -> MolecularGe
                 continue
             try:
                 atom = normalize_atom_symbol(parts[0])
-                xyz = [_float_token(parts[1]), _float_token(parts[2]), _float_token(parts[3])]
+                # Gaussian may insert an integer atom-type field after the
+                # element (for example ``C,0,x,y,z``).  Coordinates are always
+                # the final three fields of an archive geometry record.
+                xyz = [_float_token(value) for value in parts[-3:]]
             except (GeometryParseError, ValueError):
                 continue
             atoms.append(atom)

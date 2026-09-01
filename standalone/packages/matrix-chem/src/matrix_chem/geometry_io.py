@@ -51,6 +51,7 @@ def parse_xyz_lines(
         raise GeometryParseError("XYZ atom count cannot be negative")
 
     comment = lines[1].rstrip()
+    charge, multiplicity = _xyz_comment_electronic_state(comment)
     atoms: list[str] = []
     coords: list[list[float]] = []
     for raw in lines[2:]:
@@ -78,7 +79,31 @@ def parse_xyz_lines(
         comment=comment,
         source_format=source_format,
         source_path=source_path,
+        charge=charge,
+        multiplicity=multiplicity,
     )
+
+
+def _xyz_comment_electronic_state(comment: str) -> tuple[int | None, int | None]:
+    """Read explicit ``charge=`` and ``multiplicity=`` XYZ comment metadata."""
+
+    charge_match = re.search(
+        r"(?:^|[;,\s])charge\s*=\s*([+-]?\d+)(?=$|[;,\s])",
+        comment,
+        re.I,
+    )
+    multiplicity_match = re.search(
+        r"(?:^|[;,\s])multiplicity\s*=\s*(\d+)(?=$|[;,\s])",
+        comment,
+        re.I,
+    )
+    charge = None if charge_match is None else int(charge_match.group(1))
+    multiplicity = (
+        None if multiplicity_match is None else int(multiplicity_match.group(1))
+    )
+    if multiplicity is not None and multiplicity < 1:
+        raise GeometryParseError("XYZ multiplicity metadata must be positive")
+    return charge, multiplicity
 
 
 def read_xyz(path: Path) -> MolecularGeometry:
@@ -152,12 +177,15 @@ GeometrySourceKind = Literal[
     "orca",
     "xtb",
     "pyscf",
+    "et",
 ]
 
 
 def read_geometry_with_kind(
     path: Path,
     source_kind: GeometrySourceKind = "auto",
+    *,
+    smiles_fallback_policy: str | None = None,
 ) -> MolecularGeometry:
     target = Path(path)
     kind = source_kind
@@ -168,7 +196,10 @@ def read_geometry_with_kind(
         if suffix == ".xyz" or suffix == "":
             return read_xyz(target)
         if suffix in {".smi", ".smiles"}:
-            return read_smiles_file(target)
+            return read_smiles_file(
+                target,
+                fallback_policy=smiles_fallback_policy,
+            )
         if suffix in {".mol", ".sdf"}:
             from .structure_files import read_molfile
 
@@ -190,7 +221,10 @@ def read_geometry_with_kind(
             from matrix_gaussian import read_gaussian_input
 
             if is_legacy_smiles_input(target):
-                return read_legacy_smiles_input(target)
+                return read_legacy_smiles_input(
+                    target,
+                    fallback_policy=smiles_fallback_policy,
+                )
             return read_gaussian_input(target)
         if suffix in {".log", ".out"}:
             detected = detect_qm_output_format(target)
@@ -201,7 +235,10 @@ def read_geometry_with_kind(
     if kind == "xyz":
         return read_xyz(target)
     if kind == "smiles":
-        return read_smiles_file(target)
+        return read_smiles_file(
+            target,
+            fallback_policy=smiles_fallback_policy,
+        )
     if kind == "enriched_xyz":
         return read_enriched_xyz(target)
     if kind in {"mol", "sdf"}:
@@ -245,10 +282,18 @@ def read_geometry_with_kind(
         from matrix_pyscf import read_pyscf_output_geometry
 
         return read_pyscf_output_geometry(target)
+    if kind == "et":
+        from matrix_et import read_et_output_geometry
+
+        return read_et_output_geometry(target)
     raise GeometryParseError(f"unsupported geometry source kind: {source_kind}")
 
 
-def read_smiles_file(path: Path) -> MolecularGeometry:
+def read_smiles_file(
+    path: Path,
+    *,
+    fallback_policy: str | None = None,
+) -> MolecularGeometry:
     """Read the first molecule in a conventional ``.smi`` text file."""
     target = Path(path)
     line = next(
@@ -262,18 +307,37 @@ def read_smiles_file(path: Path) -> MolecularGeometry:
     title = fields[1].strip() if len(fields) == 2 else target.stem
     from matrix_link import smiles_to_geometry
 
-    return smiles_to_geometry(smiles, title=title, source_path=target)
+    return smiles_to_geometry(
+        smiles,
+        title=title,
+        source_path=target,
+        fallback_policy=fallback_policy,
+    )
 
 
-def read_geometry(path: Path) -> MolecularGeometry:
-    return read_geometry_with_kind(Path(path), "auto")
+def read_geometry(
+    path: Path,
+    *,
+    smiles_fallback_policy: str | None = None,
+) -> MolecularGeometry:
+    return read_geometry_with_kind(
+        Path(path),
+        "auto",
+        smiles_fallback_policy=smiles_fallback_policy,
+    )
 
 
 def detect_qm_output_format(
     path: Path,
-) -> Literal["gaussian", "molpro", "mrcc", "orca", "xtb", "pyscf"] | None:
+) -> Literal["gaussian", "molpro", "mrcc", "orca", "xtb", "pyscf", "et"] | None:
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     upper = text.upper()
+    if "ET TERMINATED SUCCESSFULLY!" in upper or re.search(
+        r"^\s*ET(?:\s+\S+)?\s+-\s+AN ELECTRONIC STRUCTURE PROGRAM\s*$",
+        upper,
+        re.MULTILINE,
+    ):
+        return "et"
     if (
         "PROGRAM ORCA" in upper
         or "ORCA TERMINATED" in upper

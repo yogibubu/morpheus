@@ -128,7 +128,7 @@ def assemble_fragment_oniom_from_xyzin(
 ) -> FragmentOniomEvaluation:
     """Assemble the composite derivatives using the shared #FRAGMENTS contract."""
 
-    from matrix_core import read_xyzin_geometry
+    from matrix_chem import read_xyzin_geometry
     from matrix_fragments import read_fragment_records
 
     target = Path(xyzin_path)
@@ -249,7 +249,10 @@ def align_cartesian_hessian_to_reference(
 ) -> np.ndarray:
     """Rotate a full Cartesian Hessian into a reference geometry frame."""
 
-    from matrix_core import kabsch_rotation, rotate_cartesian_derivatives
+    from matrix_chem import (
+        kabsch_rotation,
+        rotate_cartesian_derivatives,
+    )
 
     moving = np.asarray(moving_coordinates_angstrom, dtype=float)
     reference = np.asarray(reference_coordinates_angstrom, dtype=float)
@@ -283,7 +286,7 @@ def symmetric_two_oniom_geometry_seed(
     intermolecular pose is averaged only after both jobs share one frame.
     """
 
-    from matrix_core import (
+    from matrix_chem import (
         kabsch_align,
         kabsch_rotation,
         rotation_matrix_from_vector,

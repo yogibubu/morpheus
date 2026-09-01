@@ -60,8 +60,8 @@ class OracleQMJobsController:
         input_path: Path | str,
         *,
         engine: str,
-        host: str = "oracle",
-        remote_root: str = "~/matrix",
+        host: str = "",
+        remote_root: str = "",
         extra_args: tuple[str, ...] = (),
     ) -> OracleGuiCommand:
         return qm_remote_submit_command(
@@ -75,8 +75,8 @@ class OracleQMJobsController:
     def remote_status_command(
         self,
         *,
-        host: str = "oracle",
-        remote_root: str = "~/matrix",
+        host: str = "",
+        remote_root: str = "",
     ) -> OracleGuiCommand:
         return qm_remote_status_command(host=host, remote_root=remote_root)
 
@@ -84,8 +84,8 @@ class OracleQMJobsController:
         self,
         job: str,
         *,
-        host: str = "oracle",
-        remote_root: str = "~/matrix",
+        host: str = "",
+        remote_root: str = "",
         destination: Path | str = "remote_qm_runs",
         promote: str = "none",
         xyzin: Path | str | None = None,

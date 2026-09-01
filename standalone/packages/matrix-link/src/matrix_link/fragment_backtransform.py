@@ -7,10 +7,10 @@ from typing import Callable, TYPE_CHECKING
 
 import numpy as np
 
-from matrix_core import rotation_matrix_from_vector
+from matrix_chem import rotation_matrix_from_vector
 
 if TYPE_CHECKING:
-    from matrix_smith.definition import GICDefinition
+    from matrix_smith.models import GICDefinition
 
 
 @dataclass(frozen=True)
@@ -68,10 +68,11 @@ def direct_fragment_rigid_tangent(
         reference_share = len(atoms) / float(len(atoms) + len(ref_atoms))
         generators = np.zeros((ncart, 3), dtype=float)
         if function == "FTRANS":
+            axes = _fragment_translation_axes(coords, ref_atoms, modes[0][1])
             for axis in range(3):
                 displacement = np.zeros_like(coords)
-                displacement[atom_indices, axis] = moving_share
-                displacement[ref_indices, axis] = -reference_share
+                displacement[atom_indices, :] = moving_share * axes[:, axis]
+                displacement[ref_indices, :] = -reference_share * axes[:, axis]
                 generators[:, axis] = displacement.reshape(-1)
         else:
             center = np.mean(coords[atom_indices, :], axis=0)
@@ -110,14 +111,52 @@ def direct_fragment_rigid_tangent(
 
     selector = np.zeros((nq, len(handled)), dtype=float)
     selector[handled_array, np.arange(len(handled))] = 1.0
-    # Direct rigid motions must leave every non-fragment SONIC unchanged.  If
-    # a future mixed definition violates that contract, retain the safe
-    # general pseudoinverse rather than silently returning inconsistent rows.
-    if float(np.max(np.abs(matrix @ mapped - selector))) > 1.0e-7:
+    mapped = _constrained_fragment_tangent(
+        matrix,
+        mapped,
+        handled_array,
+        selector,
+    )
+    if mapped is None:
         return FragmentRigidTangent(empty, ())
     result = empty
     result[:, handled_array] = mapped
     return FragmentRigidTangent(result, tuple(int(index) for index in handled))
+
+
+def _constrained_fragment_tangent(
+    b_matrix: np.ndarray,
+    physical_tangent: np.ndarray,
+    handled_indices: np.ndarray,
+    selector: np.ndarray,
+) -> np.ndarray | None:
+    """Apply the linear hard-coordinate corrector used by the finite predictor."""
+
+    matrix = np.asarray(b_matrix, dtype=float)
+    mapped = np.asarray(physical_tangent, dtype=float)
+    residual = np.asarray(selector, dtype=float) - matrix @ mapped
+    if float(np.max(np.abs(residual))) <= 1.0e-10:
+        return mapped
+
+    protected = matrix[handled_indices, :]
+    _u, singular, vh = np.linalg.svd(protected, full_matrices=True)
+    cutoff = 1.0e-10 * max(float(singular[0]) if singular.size else 0.0, 1.0)
+    rank = int(np.count_nonzero(singular > cutoff))
+    null_basis = vh[rank:, :].T
+    if null_basis.shape[1] == 0:
+        return None
+
+    handled = {int(index) for index in handled_indices}
+    solve_indices = np.asarray(
+        [index for index in range(matrix.shape[0]) if index not in handled],
+        dtype=int,
+    )
+    reduced = matrix[solve_indices, :] @ null_basis
+    correction = null_basis @ np.linalg.pinv(reduced, rcond=1.0e-10) @ residual[solve_indices, :]
+    candidate = mapped + correction
+    if float(np.max(np.abs(matrix @ candidate - selector))) > 1.0e-7:
+        return None
+    return candidate
 
 
 def direct_fragment_rigid_prediction(
@@ -125,6 +164,10 @@ def direct_fragment_rigid_prediction(
     coordinates_angstrom: np.ndarray,
     target_values: np.ndarray,
     evaluate_values: Callable[[np.ndarray], np.ndarray],
+    *,
+    evaluate_subset: Callable[[np.ndarray, tuple[int, ...]], tuple[np.ndarray, np.ndarray]]
+    | None = None,
+    evaluate_values_subset: Callable[[np.ndarray, tuple[int, ...]], np.ndarray] | None = None,
 ) -> FragmentRigidPrediction:
     """Impose complete FTRANS/FROT triplets by fragment rigid motions.
 
@@ -135,23 +178,59 @@ def direct_fragment_rigid_prediction(
     coords = np.asarray(coordinates_angstrom, dtype=float).copy()
     target = np.asarray(target_values, dtype=float).reshape(-1)
     handled: list[int] = []
-    for (function, atoms, ref_atoms), modes in _unit_fragment_groups(definition).items():
+    groups = _unit_fragment_groups(definition)
+    # A body-fixed translation is measured in the final reference-fragment
+    # frame.  Realize orientation first and translation second; the reverse
+    # order lets the subsequent reference-frame rotation change an already
+    # satisfied FTRANS target.  The ordering is representation-level and
+    # applies uniformly to every rigid complex.
+    ordered_groups = sorted(
+        groups.items(),
+        key=lambda item: 0 if item[0][0] == "FROT" else 1,
+    )
+    for (function, atoms, ref_atoms), modes in ordered_groups:
         if set(modes) != {0, 1, 2}:
             continue
         indices = [modes[mode][0] for mode in range(3)]
+        index_tuple = tuple(indices)
         atom_indices = np.asarray([atom - 1 for atom in atoms], dtype=int)
         ref_indices = np.asarray([atom - 1 for atom in ref_atoms], dtype=int)
         moving_share = len(ref_atoms) / float(len(atoms) + len(ref_atoms))
         reference_share = len(atoms) / float(len(atoms) + len(ref_atoms))
-        current = np.asarray(evaluate_values(coords), dtype=float)
-        delta = target[indices] - current[indices]
+        if evaluate_values_subset is not None:
+            current = np.asarray(
+                evaluate_values_subset(coords, index_tuple), dtype=float
+            ).reshape(3)
+            local_b = None
+        elif evaluate_subset is None:
+            current = np.asarray(evaluate_values(coords), dtype=float)[indices]
+            local_b = None
+        else:
+            current, local_b = evaluate_subset(coords, index_tuple)
+            current = np.asarray(current, dtype=float).reshape(3)
+            local_b = np.asarray(local_b, dtype=float)
+        delta = target[indices] - current
         if function == "FTRANS":
-            coords[atom_indices, :] += moving_share * delta
-            coords[ref_indices, :] -= reference_share * delta
+            axes = _fragment_translation_axes(coords, ref_atoms, modes[0][1])
+            laboratory_delta = axes @ delta
+            coords[atom_indices, :] += moving_share * laboratory_delta
+            coords[ref_indices, :] -= reference_share * laboratory_delta
         else:
             for _iteration in range(4):
-                current = np.asarray(evaluate_values(coords), dtype=float)
-                delta = target[indices] - current[indices]
+                if evaluate_values_subset is not None:
+                    current = np.asarray(
+                        evaluate_values_subset(coords, index_tuple), dtype=float
+                    ).reshape(3)
+                    local_b = None
+                elif evaluate_subset is None:
+                    full_current = np.asarray(evaluate_values(coords), dtype=float)
+                    current = full_current[indices]
+                    local_b = None
+                else:
+                    current, local_b = evaluate_subset(coords, index_tuple)
+                    current = np.asarray(current, dtype=float).reshape(3)
+                    local_b = np.asarray(local_b, dtype=float)
+                delta = target[indices] - current
                 if float(np.linalg.norm(delta)) <= 1.0e-10:
                     break
                 center = np.mean(coords[atom_indices, :], axis=0)
@@ -165,21 +244,49 @@ def direct_fragment_rigid_prediction(
                         centered @ rotation_matrix_from_vector(moving_share * increment) + center
                     )
                     trial[ref_indices, :] = (
-                        ref_centered
-                        @ rotation_matrix_from_vector(-reference_share * increment)
+                        ref_centered @ rotation_matrix_from_vector(-reference_share * increment)
                         + ref_center
                     )
                     return trial
 
-                jacobian = np.zeros((3, 3), dtype=float)
-                epsilon = 1.0e-5
-                for axis in range(3):
-                    increment = np.zeros(3, dtype=float)
-                    increment[axis] = epsilon
-                    trial = rotated(increment)
-                    jacobian[:, axis] = (
-                        np.asarray(evaluate_values(trial), dtype=float)[indices] - current[indices]
-                    ) / epsilon
+                if local_b is None:
+                    jacobian = np.zeros((3, 3), dtype=float)
+                    epsilon = 1.0e-5
+                    for axis in range(3):
+                        increment = np.zeros(3, dtype=float)
+                        increment[axis] = epsilon
+                        trial = rotated(increment)
+                        trial_values = (
+                            np.asarray(
+                                evaluate_values_subset(trial, index_tuple),
+                                dtype=float,
+                            ).reshape(3)
+                            if evaluate_values_subset is not None
+                            else np.asarray(evaluate_values(trial), dtype=float)[
+                                indices
+                            ]
+                        )
+                        jacobian[:, axis] = (
+                            trial_values - current
+                        ) / epsilon
+                else:
+                    generators = np.zeros((coords.size, 3), dtype=float)
+                    for axis in range(3):
+                        unit = np.zeros(3, dtype=float)
+                        unit[axis] = 1.0
+                        skew = np.asarray(
+                            [
+                                [0.0, -unit[2], unit[1]],
+                                [unit[2], 0.0, -unit[0]],
+                                [-unit[1], unit[0], 0.0],
+                            ],
+                            dtype=float,
+                        )
+                        displacement = np.zeros_like(coords)
+                        displacement[atom_indices, :] = moving_share * (centered @ (-skew))
+                        displacement[ref_indices, :] = reference_share * (ref_centered @ skew)
+                        generators[:, axis] = displacement.reshape(-1)
+                    jacobian = local_b @ generators
                 try:
                     physical_increment = np.linalg.solve(jacobian, delta)
                 except np.linalg.LinAlgError:
@@ -187,14 +294,61 @@ def direct_fragment_rigid_prediction(
                 candidates = []
                 for scale in (1.0, 0.5, 0.25):
                     trial = rotated(scale * physical_increment)
-                    residual = target[indices] - np.asarray(evaluate_values(trial), dtype=float)[indices]
+                    if evaluate_values_subset is not None:
+                        trial_values = np.asarray(
+                            evaluate_values_subset(trial, index_tuple), dtype=float
+                        ).reshape(3)
+                    elif evaluate_subset is not None:
+                        trial_values = np.asarray(
+                            evaluate_subset(trial, index_tuple)[0], dtype=float
+                        ).reshape(3)
+                    else:
+                        trial_values = np.asarray(evaluate_values(trial), dtype=float)[indices]
+                    residual = target[indices] - trial_values
                     candidates.append((float(np.linalg.norm(residual)), trial))
                 best_norm, best_trial = min(candidates, key=lambda item: item[0])
                 if best_norm >= float(np.linalg.norm(delta)):
                     break
                 coords = best_trial
-        handled.extend(indices)
+        # A fragment triplet is protected from the nonlinear corrector only
+        # when its finite rigid predictor actually reached the requested
+        # values.  During reactive rearrangements a fragment's canonical
+        # frame can become ill-conditioned; marking a failed FROT predictor as
+        # handled then removes those residuals from the only solver capable of
+        # resolving them and creates a false optimizer plateau.
+        if evaluate_values_subset is not None:
+            realized = np.asarray(
+                evaluate_values_subset(coords, index_tuple), dtype=float
+            ).reshape(3)
+        elif evaluate_subset is not None:
+            realized = np.asarray(evaluate_subset(coords, index_tuple)[0], dtype=float).reshape(3)
+        else:
+            realized = np.asarray(evaluate_values(coords), dtype=float)[indices]
+        residual_norm = float(np.linalg.norm(target[indices] - realized))
+        target_change = float(np.linalg.norm(target[indices] - current))
+        if residual_norm <= max(1.0e-9, 1.0e-7 * max(1.0, target_change)):
+            handled.extend(indices)
     return FragmentRigidPrediction(coords, tuple(sorted(set(handled))))
+
+
+def _fragment_translation_axes(
+    coordinates_angstrom: np.ndarray,
+    ref_atoms: tuple[int, ...],
+    primitive: object,
+) -> np.ndarray:
+    ref_frame_atoms = tuple(getattr(primitive, "ref_frame_atoms", ()))
+    if not ref_frame_atoms:
+        return np.eye(3, dtype=float)
+    from matrix_smith.numerics import _fragment_frame
+
+    return np.asarray(
+        _fragment_frame(
+            np.asarray(coordinates_angstrom, dtype=float),
+            ref_atoms,
+            frame_atoms=ref_frame_atoms,
+        ),
+        dtype=float,
+    )
 
 
 def _unit_fragment_groups(

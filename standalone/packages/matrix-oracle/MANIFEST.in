@@ -21,4 +21,3 @@ exclude src/matrix_oracle/trinity.py
 exclude src/matrix_oracle/vpt2_vci_state.py
 exclude src/matrix_oracle/workbench.py
 exclude src/matrix_oracle/workflows.py
-prune src/oracle_gui

@@ -8,7 +8,7 @@ from typing import Iterable
 
 from matrix_core import build_run_manifest, sha256_file, write_manifest
 from matrix_core.paths import repo_root
-from matrix_engines import legacy_gicforge_executable
+from matrix_engines.gicforge_reference import legacy_gicforge_executable
 from .gic_symmetry import gicsym_requested, symmetry_postprocess_requested, write_gic_symmetry_files
 
 

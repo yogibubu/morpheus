@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from .fit import (
-    SemiexperimentalIterationTrace,
+from .models import SemiexperimentalIterationTrace
+from .fit_outputs import (
     iteration_trace_csv_rows,
     _svd_diagnostics_csv,
     _uncertainty_diagnostics_csv,

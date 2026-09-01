@@ -1,28 +1,17 @@
 cff-version: 1.2.0
-message: "If you use MORPHEUS, please cite the software, the MORPHEUS article, and the companion SONIC methodology."
-title: "MORPHEUS: topology-constrained refinement models for semiexperimental equilibrium structures"
+message: "If you use ORACLE, please cite the software and the accompanying article."
+title: "ORACLE: continuous molecular perception and internal coordinates for symmetry, fragmentation and structural improvement"
 type: software
 authors:
   - family-names: Barone
     given-names: Vincenzo
-version: 0.1.0rc6
-date-released: 2026-07-21
-repository-code: "https://github.com/yogibubu/morpheus"
+version: 0.1.0rc8
+date-released: 2026-07-18
+repository-code: "https://github.com/yogibubu/MATRIX"
 preferred-citation:
   type: article
-  title: "Algorithmic Construction and Exploitation of Topology-Constrained Refinement Models for Semiexperimental Equilibrium Structures"
+  title: "ORACLE: Continuous Molecular Perception and Internal Coordinates for Symmetry, Fragmentation and Structural Improvement"
   authors:
     - family-names: Barone
       given-names: Vincenzo
   year: 2026
-references:
-  - type: article
-    title: "SONIC: Symmetry-Oriented Non-redundant Internal Coordinates"
-    authors:
-      - family-names: Barone
-        given-names: Vincenzo
-    year: 2026
-    identifiers:
-      - type: other
-        value: "arXiv:2607.16550"
-    url: "https://arxiv.org/abs/2607.16550"

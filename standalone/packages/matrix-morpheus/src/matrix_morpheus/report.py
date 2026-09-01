@@ -9,7 +9,7 @@ import re
 
 import numpy as np
 
-from matrix_core.numerics import rank_condition
+from matrix_morpheus.numerics import rank_condition
 
 from .contracts import (
     IsotopologueObservation,
@@ -17,27 +17,36 @@ from .contracts import (
     QMParameterPredicate,
     SemiexperimentalFitRequest,
 )
-from .fit import (
-    SemiexperimentalFitResult,
+from .coordinate_model import (
     _active_mask,
     _atomic_number,
-    _build_measurement_model,
     _gic_model,
     _gic_fixed_patterns,
-    _gic_values,
     _gicforge_a1_mask,
-    _jacobian_constants_wrt_gics,
-    _combined_fixed_parameters,
-    _fixed_primitives_from_patterns,
     _hydrogen_fixed_primitives,
     _merge_primitives,
     _parameter_class_transform,
     _primitive_constrained_transform,
-    _topology_lock,
-    _semiexp_warning_rows,
     _symmetry_expanded_fixed_primitives,
-    fit_semiexperimental_geometry,
 )
+from .constraints import (
+    _fixed_primitive_targets,
+    _fixed_primitives_from_patterns,
+    _gic_expression_constraint_targets,
+    _gic_expression_constraints_from_patterns,
+    _gic_expression_definitions_from_patterns,
+    _gic_values,
+    _linear_primitive_constraints_from_patterns,
+    _project_fixed_primitives,
+)
+from .fit import fit_semiexperimental_geometry
+from .fit_outputs import _combined_fixed_parameters, _semiexp_warning_rows
+from .measurement_model import (
+    _build_measurement_model,
+    _jacobian_constants_wrt_gics,
+    _topology_lock,
+)
+from .models import SemiexperimentalFitResult
 from .geometry_input import read_geometry_input
 
 
@@ -332,17 +341,44 @@ def preview_semiexperimental_conditioning(
     coords_arr = np.asarray(geometry_input.coordinates_angstrom, dtype=float)
     z_numbers = np.array([_atomic_number(symbol) for symbol in atoms], dtype=int)
     prims, u_matrix, labels = _gic_model(coords_arr, z_numbers)
-    measurement = _build_measurement_model(request, atoms, coords_arr, prims, u_matrix, labels)
     fixed_parameters = _combined_fixed_parameters(
         request.fixed_parameters, geometry_input.fixed_parameters
     )
     fixed_gic_patterns = _gic_fixed_patterns(fixed_parameters)
+    linear_constraints = _linear_primitive_constraints_from_patterns(fixed_parameters)
+    expression_constraints = _gic_expression_constraints_from_patterns(fixed_parameters)
+    expression_definitions = _gic_expression_definitions_from_patterns(fixed_parameters)
     fixed_primitives = _merge_primitives(
         _fixed_primitives_from_patterns(fixed_parameters),
         _hydrogen_fixed_primitives(atoms, prims, fixed_parameters, coords=coords_arr),
     )
     fixed_primitives = _symmetry_expanded_fixed_primitives(
         atoms, coords_arr, prims, fixed_primitives
+    )
+    fixed_targets = _fixed_primitive_targets(fixed_primitives, coords_arr)
+    expression_targets = _gic_expression_constraint_targets(
+        expression_constraints,
+        coords_arr,
+        prims,
+        u_matrix,
+        labels,
+        definitions=expression_definitions,
+    )
+    if fixed_primitives or linear_constraints or expression_constraints:
+        coords_arr = _project_fixed_primitives(
+            coords_arr,
+            fixed_primitives,
+            fixed_targets,
+            linear_constraints=linear_constraints,
+            expression_constraints=expression_constraints,
+            expression_targets=expression_targets,
+            prims=prims,
+            u_matrix=u_matrix,
+            labels=labels,
+            expression_definitions=expression_definitions,
+        )
+    measurement = _build_measurement_model(
+        request, atoms, coords_arr, prims, u_matrix, labels
     )
     active = _active_mask(
         labels, fixed_gic_patterns, request.parameter_classes
@@ -361,6 +397,11 @@ def preview_semiexperimental_conditioning(
         transform,
         _names,
         fixed_primitives,
+        linear_constraints=linear_constraints,
+        expression_constraints=expression_constraints,
+        expression_targets=expression_targets,
+        expression_definitions=expression_definitions,
+        labels=labels,
     )
     jac = jac_gic @ transform
     weighted = jac * np.sqrt(measurement.weights)[:, None]
@@ -1632,18 +1673,6 @@ _GIC_KIND_MARKERS = {
 }
 
 
-def _first_gic_expression(label: str, kind: str) -> str:
-    for marker in _GIC_KIND_MARKERS.get(kind, ()):
-        start = 0
-        while True:
-            pos = label.find(marker, start)
-            if pos < 0:
-                break
-            end = label.find(")", pos)
-            if end < 0:
-                break
-            return label[pos : end + 1]
-    return ""
 
 
 def _substituted_hydrogens(
@@ -1657,54 +1686,12 @@ def _substituted_hydrogens(
     return result
 
 
-def _heavy_h_bonds(atoms: tuple[str, ...], labels: tuple[str, ...]) -> tuple[tuple[int, int], ...]:
-    pairs = []
-    for label in labels:
-        for left, right in _label_atom_pairs(label, "bond"):
-            if atoms[left - 1].upper() == "H" and atoms[right - 1].upper() != "H":
-                pairs.append((right, left))
-            elif atoms[right - 1].upper() == "H" and atoms[left - 1].upper() != "H":
-                pairs.append((left, right))
-    return tuple(pairs)
 
 
-def _label_atom_pairs(label: str, kind: str) -> tuple[tuple[int, int], ...]:
-    pairs = []
-    for marker in _GIC_KIND_MARKERS.get(kind, (f"{kind}(",)):
-        start = 0
-        while True:
-            pos = label.find(marker, start)
-            if pos < 0:
-                break
-            end = label.find(")", pos)
-            if end < 0:
-                break
-            parts = [
-                int(part.strip())
-                for part in label[pos + len(marker) : end].split(",")
-                if part.strip().lstrip("-").isdigit()
-            ]
-            parts = [part for part in parts if part > 0]
-            if len(parts) >= 2:
-                pairs.append((parts[0], parts[-1]))
-            start = end + 1
-    return tuple(pairs)
 
 
-def _matches_any(labels: tuple[str, ...], pattern: str) -> bool:
-    low = pattern.lower()
-    return any(low in label.lower() for label in labels)
 
 
-def _angle_has_h(label: str, atoms: tuple[str, ...]) -> bool:
-    expr = _first_gic_expression(label, "angle")
-    if not expr:
-        return False
-    atom_text = expr[expr.find("(") + 1 : -1]
-    atom_ids = [
-        int(part.strip()) for part in atom_text.split(",") if part.strip().lstrip("-").isdigit()
-    ]
-    return any(1 <= idx <= len(atoms) and atoms[idx - 1].upper() == "H" for idx in atom_ids)
 
 
 def _row(key: str, value: str) -> str:

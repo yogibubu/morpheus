@@ -17,10 +17,12 @@ import numpy as np
 
 from matrix_core import read_sectioned_lines, replace_section, section_content
 
+from .coordinate_library import CoordinateComponent, coordinate_selection_units
 from .structural_corrections import pseudo_bond_pairs
 
 
-MATRIX_XYZ_PRIMITIVES_SCHEMA = "matrix.xyz.primitives.v1"
+MATRIX_XYZ_PRIMITIVES_SCHEMA = "matrix.xyz.primitives.v2"
+LEGACY_MATRIX_XYZ_PRIMITIVES_SCHEMA = "matrix.xyz.primitives.v1"
 LEGACY_ORACLE_XYZ_PRIMITIVES_SCHEMA = "oracle.xyz.primitives.v1"
 LINEAR_ANGLE_DEGREES = 165.0
 
@@ -44,6 +46,7 @@ class Primitive:
             "linear_bend": "L",
             "dihedral": "D",
             "out_of_plane": "U",
+            "out_of_plane_height": "H",
             "frag_dist": "R",
             "frag_atom_dist": "R",
             "frag_trans": "FTRANS",
@@ -54,7 +57,8 @@ class Primitive:
     def label(self) -> str:
         atoms = ",".join(str(atom + 1) for atom in self.atoms)
         if self.kind == "linear_bend":
-            return f"L({atoms},0,{self.mode})"
+            reference = self.ref[0] + 1 if len(self.ref) == 1 else 0
+            return f"L({atoms},{reference},{self.mode})"
         return f"{self.function}({atoms})"
 
 
@@ -101,8 +105,13 @@ def build_primitives(
             atoms = (left, center, right)
             if angle(*atoms, xyz) >= linear_threshold:
                 linear_keys.add(_angle_key(atoms))
+                reference = linear_bend_reference_atom(atoms, xyz)
+                refs = (reference,) if reference is not None else ()
                 linears.extend(
-                    (Primitive("linear_bend", atoms, mode=-1), Primitive("linear_bend", atoms, mode=-2))
+                    (
+                        Primitive("linear_bend", atoms, mode=-1, ref=refs),
+                        Primitive("linear_bend", atoms, mode=-2, ref=refs),
+                    )
                 )
             else:
                 angles.append(Primitive("angle", atoms))
@@ -113,6 +122,8 @@ def build_primitives(
         for i in sorted(set(discrete_graph.adjacency[j]) - {k}):
             for ell in sorted(set(discrete_graph.adjacency[k]) - {j}):
                 atoms = (i, j, k, ell)
+                if len(set(atoms)) != 4:
+                    continue
                 canonical = min(atoms, tuple(reversed(atoms)))
                 if canonical in seen:
                     continue
@@ -140,7 +151,16 @@ def eval_primitive(primitive: Primitive, coords: np.ndarray) -> float:
         return float(dihedral(*primitive.atoms, xyz))
     if primitive.kind == "out_of_plane":
         return float(out_of_plane(*primitive.atoms, xyz))
+    if primitive.kind == "out_of_plane_height":
+        return float(out_of_plane_height(*primitive.atoms, xyz))
     if primitive.kind == "linear_bend":
+        if len(primitive.ref) == 1:
+            return _four_atom_linear_bend_value(
+                *primitive.atoms,
+                primitive.ref[0],
+                xyz,
+                mode=primitive.mode,
+            )
         first, second = linear_components(*primitive.atoms, xyz)
         return float(first if primitive.mode == -1 else second)
     if primitive.kind in {"frag_dist", "frag_atom_dist", "frag_trans", "frag_rot"}:
@@ -162,8 +182,21 @@ def grad_primitive(primitive: Primitive, coords: np.ndarray, fd_step: float = 1.
         return _dihedral_grad(*primitive.atoms, xyz)
     if primitive.kind == "out_of_plane":
         return _out_of_plane_grad(*primitive.atoms, xyz)
+    if primitive.kind == "out_of_plane_height":
+        return _out_of_plane_height_grad(*primitive.atoms, xyz)
     if primitive.kind == "linear_bend":
+        if len(primitive.ref) == 1:
+            return _four_atom_linear_bend_grad(
+                *primitive.atoms,
+                primitive.ref[0],
+                xyz,
+                mode=primitive.mode,
+            )
         return _linear_grad(*primitive.atoms, xyz, mode=primitive.mode)
+    if primitive.kind in {"frag_dist", "frag_atom_dist"}:
+        return _fragment_distance_grad(primitive, xyz)
+    if primitive.kind == "frag_trans":
+        return _fragment_translation_grad(primitive, xyz)
     # Fragment exponential-map rows retain their numerical derivative.
     return _finite_difference_gradient(lambda value: eval_primitive(primitive, value), xyz, fd_step)
 
@@ -171,10 +204,44 @@ def grad_primitive(primitive: Primitive, coords: np.ndarray, fd_step: float = 1.
 def primitive_b_matrix(
     primitives: Sequence[Primitive], coords: np.ndarray, *, fd_step: float = 1.0e-5
 ) -> np.ndarray:
-    """Evaluate the Wilson matrix associated with an ORACLE primitive set."""
+    """Evaluate the Wilson matrix without constructing one dense row at a time.
+
+    Ordinary valence primitives touch at most four atoms.  Their derivatives
+    are therefore evaluated in compact local regions and scattered directly
+    into the preallocated matrix.  Fragment coordinates retain the full
+    numerical path because their support is intentionally nonlocal.
+    """
     xyz = np.asarray(coords, dtype=float)
-    rows = [grad_primitive(primitive, xyz, fd_step=fd_step).reshape(-1) for primitive in primitives]
-    return np.vstack(rows) if rows else np.zeros((0, 3 * xyz.shape[0]), dtype=float)
+    matrix = np.zeros((len(primitives), 3 * xyz.shape[0]), dtype=float)
+    for row, primitive in enumerate(primitives):
+        if primitive.kind.startswith("frag_"):
+            matrix[row] = grad_primitive(primitive, xyz, fd_step=fd_step).reshape(-1)
+            continue
+        support_atoms = (
+            primitive.atoms + primitive.ref
+            if primitive.kind == "linear_bend"
+            else primitive.atoms
+        )
+        support = tuple(dict.fromkeys(int(atom) for atom in support_atoms))
+        remap = {atom: index for index, atom in enumerate(support)}
+        local = Primitive(
+            primitive.kind,
+            tuple(remap[int(atom)] for atom in primitive.atoms),
+            primitive.mode,
+            tuple(
+                remap[int(atom)]
+                for atom in primitive.ref
+                if int(atom) in remap
+            ),
+        )
+        local_gradient = grad_primitive(
+            local,
+            xyz[np.asarray(support, dtype=int)],
+            fd_step=fd_step,
+        )
+        for local_atom, global_atom in enumerate(support):
+            matrix[row, 3 * global_atom : 3 * global_atom + 3] = local_gradient[local_atom]
+    return matrix
 
 
 def build_primitive_contract(discrete_graph, coords: np.ndarray) -> PrimitiveCoordinateContract:
@@ -254,8 +321,23 @@ def read_primitive_contract(path: Path) -> PrimitiveCoordinateContract:
         primitives.append(Primitive(fields[1], atoms, int(fields[4]), ref))
         values.append(float(fields[6]))
     schema = metadata.get("SCHEMA", "")
-    if schema not in {MATRIX_XYZ_PRIMITIVES_SCHEMA, LEGACY_ORACLE_XYZ_PRIMITIVES_SCHEMA}:
+    if schema not in {
+        MATRIX_XYZ_PRIMITIVES_SCHEMA,
+        LEGACY_MATRIX_XYZ_PRIMITIVES_SCHEMA,
+        LEGACY_ORACLE_XYZ_PRIMITIVES_SCHEMA,
+    }:
         raise ValueError(f"unsupported ORACLE primitive schema: {schema or 'missing'}")
+    if schema in {LEGACY_MATRIX_XYZ_PRIMITIVES_SCHEMA, LEGACY_ORACLE_XYZ_PRIMITIVES_SCHEMA}:
+        # v1 evaluated the serialized tuple (i,j,k,l) as the angle of i from
+        # the k-j-l plane.  U(j,l,k,i) in the Gaussian convention has exactly
+        # the same value and Wilson row, so this permutation losslessly
+        # migrates frozen contracts without regenerating their fingerprints.
+        primitives = [
+            Primitive(primitive.kind, (atoms[1], atoms[3], atoms[2], atoms[0]), primitive.mode, primitive.ref)
+            if primitive.kind == "out_of_plane" and len((atoms := primitive.atoms)) == 4
+            else primitive
+            for primitive in primitives
+        ]
     if int(metadata.get("PRIMITIVE_COUNT", "-1")) != len(primitives):
         raise ValueError("#PRIMITIVES count does not match its definitions")
     return PrimitiveCoordinateContract(
@@ -273,6 +355,18 @@ def validate_primitive_contract(
     contract: PrimitiveCoordinateContract, coords: np.ndarray, *, atol: float = 2.0e-8
 ) -> None:
     xyz = np.asarray(coords, dtype=float)
+    coordinate_selection_units(
+        tuple(
+            CoordinateComponent(
+                operator=primitive.function,
+                atoms=primitive.atoms,
+                mode=primitive.mode,
+                ref_atoms=primitive.ref,
+                context=(primitive.kind,),
+            )
+            for primitive in contract.primitives
+        )
+    )
     if contract.reference_geometry_sha256 and contract.reference_geometry_sha256 != _array_sha256(xyz):
         raise ValueError("#PRIMITIVES reference geometry does not match the Cartesian block")
     values = eval_primitives(contract.primitives, xyz)
@@ -289,6 +383,37 @@ def angle(i: int, j: int, k: int, coords: np.ndarray) -> float:
     return float(np.arccos(np.clip(np.dot(u, v), -1.0, 1.0)))
 
 
+def linear_bend_reference_atom(
+    atoms: tuple[int, int, int],
+    coords: np.ndarray,
+    *,
+    minimum_angular_deviation: float = 1.0e-3,
+) -> int | None:
+    """Choose Gaussian's deterministic fourth atom for a local linear bend.
+
+    The score follows Gaussian's ``CrdCon`` rule: maximize the smaller
+    deviation from 0 or pi of the two angles made by the candidate reference
+    with the two arms of ``A1-O-A2``.  A fully linear molecule has no valid
+    real reference and retains the plane-based three-atom convention.
+    """
+
+    xyz = np.asarray(coords, dtype=float)
+    endpoint1, center, endpoint2 = atoms
+    candidates: list[tuple[float, int]] = []
+    for reference in range(len(xyz)):
+        if reference in atoms:
+            continue
+        first = angle(endpoint1, center, reference, xyz)
+        second = angle(reference, center, endpoint2, xyz)
+        score = min(first, second, np.pi - first, np.pi - second)
+        if np.isfinite(score):
+            candidates.append((float(score), reference))
+    if not candidates:
+        return None
+    score, reference = max(candidates, key=lambda item: (item[0], -item[1]))
+    return reference if score > float(minimum_angular_deviation) else None
+
+
 def dihedral(i: int, j: int, k: int, ell: int, coords: np.ndarray) -> float:
     b1 = coords[i] - coords[j]
     b2 = coords[k] - coords[j]
@@ -298,12 +423,24 @@ def dihedral(i: int, j: int, k: int, ell: int, coords: np.ndarray) -> float:
 
 
 def out_of_plane(i: int, j: int, k: int, ell: int, coords: np.ndarray) -> float:
-    vector = coords[i] - coords[j]
-    normal = np.cross(coords[k] - coords[j], coords[ell] - coords[j])
+    """Gaussian U(i,j,k,l): center i, plane i-j-k, out-of-plane atom l."""
+
+    vector = coords[ell] - coords[i]
+    normal = np.cross(coords[j] - coords[i], coords[k] - coords[i])
     denominator = np.linalg.norm(vector) * np.linalg.norm(normal)
     if denominator < 1.0e-12:
         return 0.0
-    return float(np.arcsin(np.clip(np.dot(vector, normal) / denominator, -1.0, 1.0)))
+    return float(-np.arcsin(np.clip(np.dot(vector, normal) / denominator, -1.0, 1.0)))
+
+
+def out_of_plane_height(i: int, j: int, k: int, ell: int, coords: np.ndarray) -> float:
+    """Gaussian H(i,j,k,l): signed distance of l from the j-i-k plane."""
+
+    normal = np.cross(coords[j] - coords[i], coords[k] - coords[i])
+    normal_norm = np.linalg.norm(normal)
+    if normal_norm < 1.0e-12:
+        return 0.0
+    return float(np.dot(coords[ell] - coords[i], normal / normal_norm))
 
 
 def linear_components(i: int, j: int, k: int, coords: np.ndarray) -> tuple[float, float]:
@@ -316,6 +453,39 @@ def linear_components(i: int, j: int, k: int, coords: np.ndarray) -> tuple[float
     second = _unit(np.cross(u, first))
     bending = v + u
     return float(np.dot(bending, first)), float(np.dot(bending, second))
+
+
+def referenced_linear_bend_perpendicular_value(
+    first_dihedral: float,
+    second_dihedral: float,
+) -> float:
+    """Return the continuous perpendicular component of a four-atom L chart."""
+
+    difference = (
+        float(first_dihedral) - float(second_dihedral) + np.pi
+    ) % (2.0 * np.pi) - np.pi
+    return float(np.pi + 0.5 * difference)
+
+
+def _four_atom_linear_bend_value(
+    i: int,
+    j: int,
+    k: int,
+    reference: int,
+    coords: np.ndarray,
+    *,
+    mode: int,
+) -> float:
+    """Evaluate Gaussian's four-atom L(A1,O,A2,A4,component)."""
+
+    if mode == -1:
+        return angle(i, j, reference, coords) + angle(reference, j, k, coords)
+    if mode == -2:
+        return referenced_linear_bend_perpendicular_value(
+            dihedral(i, j, reference, k, coords),
+            dihedral(i, reference, j, k, coords),
+        )
+    raise ValueError(f"invalid linear-bend mode: {mode}")
 
 
 def _eval_fragment_primitive(primitive: Primitive, coords: np.ndarray) -> float:
@@ -398,6 +568,39 @@ def _bond_grad(i: int, j: int, coords: np.ndarray) -> np.ndarray:
     gradient = np.zeros_like(coords)
     if distance > 1.0e-12:
         gradient[i], gradient[j] = delta / distance, -delta / distance
+    return gradient
+
+
+def _fragment_distance_grad(primitive: Primitive, coords: np.ndarray) -> np.ndarray:
+    fragment = tuple(int(atom) for atom in primitive.atoms)
+    reference = tuple(int(atom) for atom in primitive.ref)
+    if not fragment or not reference:
+        raise ValueError("fragment distance requires two nonempty atom sets")
+    delta = coords[np.asarray(fragment)].mean(axis=0) - coords[np.asarray(reference)].mean(axis=0)
+    distance = float(np.linalg.norm(delta))
+    if distance <= 1.0e-12:
+        raise FloatingPointError("fragment centers are coincident")
+    unit = delta / distance
+    gradient = np.zeros_like(coords)
+    for atom in fragment:
+        gradient[atom] += unit / len(fragment)
+    for atom in reference:
+        gradient[atom] -= unit / len(reference)
+    return gradient
+
+
+def _fragment_translation_grad(primitive: Primitive, coords: np.ndarray) -> np.ndarray:
+    fragment = tuple(int(atom) for atom in primitive.atoms)
+    reference = tuple(int(atom) for atom in primitive.ref)
+    if not fragment or not reference or primitive.mode not in {0, 1, 2}:
+        raise ValueError("fragment translation requires two atom sets and mode 0, 1, or 2")
+    axis = np.zeros(3, dtype=float)
+    axis[primitive.mode] = 1.0
+    gradient = np.zeros_like(coords)
+    for atom in fragment:
+        gradient[atom] += axis / len(fragment)
+    for atom in reference:
+        gradient[atom] -= axis / len(reference)
     return gradient
 
 
@@ -493,8 +696,8 @@ def _cross_matrix(vector: np.ndarray) -> np.ndarray:
 
 
 def _out_of_plane_grad(i: int, j: int, k: int, ell: int, coords: np.ndarray) -> np.ndarray:
-    vector = coords[i] - coords[j]
-    left, right = coords[k] - coords[j], coords[ell] - coords[j]
+    vector = coords[ell] - coords[i]
+    left, right = coords[j] - coords[i], coords[k] - coords[i]
     vector_norm = np.linalg.norm(vector)
     normal = np.cross(left, right)
     normal_norm = np.linalg.norm(normal)
@@ -510,11 +713,31 @@ def _out_of_plane_grad(i: int, j: int, k: int, ell: int, coords: np.ndarray) -> 
     gradient_vector = unit_jacobian @ unit_normal
     gradient_normal = normal_jacobian @ unit_vector
     gradient = np.zeros_like(coords)
-    gradient[i] = gradient_vector
-    gradient[j] = -gradient_vector + (_cross_matrix(right) - _cross_matrix(left)).T @ gradient_normal
-    gradient[k] = (-_cross_matrix(right)).T @ gradient_normal
-    gradient[ell] = _cross_matrix(left).T @ gradient_normal
-    return gradient / denominator
+    gradient[ell] = gradient_vector
+    gradient[i] = -gradient_vector + (_cross_matrix(right) - _cross_matrix(left)).T @ gradient_normal
+    gradient[j] = (-_cross_matrix(right)).T @ gradient_normal
+    gradient[k] = _cross_matrix(left).T @ gradient_normal
+    return -gradient / denominator
+
+
+def _out_of_plane_height_grad(
+    i: int, j: int, k: int, ell: int, coords: np.ndarray
+) -> np.ndarray:
+    vector = coords[ell] - coords[i]
+    left, right = coords[j] - coords[i], coords[k] - coords[i]
+    normal = np.cross(left, right)
+    normal_norm = np.linalg.norm(normal)
+    if normal_norm < 1.0e-12:
+        return np.zeros_like(coords)
+    unit_normal = normal / normal_norm
+    normal_jacobian = (np.eye(3) - np.outer(unit_normal, unit_normal)) / normal_norm
+    gradient_normal = normal_jacobian @ vector
+    gradient = np.zeros_like(coords)
+    gradient[ell] = unit_normal
+    gradient[i] = -unit_normal + (_cross_matrix(right) - _cross_matrix(left)).T @ gradient_normal
+    gradient[j] = (-_cross_matrix(right)).T @ gradient_normal
+    gradient[k] = _cross_matrix(left).T @ gradient_normal
+    return gradient
 
 
 def _linear_grad(i: int, j: int, k: int, coords: np.ndarray, *, mode: int) -> np.ndarray:
@@ -549,6 +772,32 @@ def _linear_grad(i: int, j: int, k: int, coords: np.ndarray, *, mode: int) -> np
     gradient[k] = jacobian_v.T @ derivative_v
     gradient[j] = -(gradient[i] + gradient[k])
     return gradient
+
+
+def _four_atom_linear_bend_grad(
+    i: int,
+    j: int,
+    k: int,
+    reference: int,
+    coords: np.ndarray,
+    *,
+    mode: int,
+) -> np.ndarray:
+    """Analytic Wilson row for Gaussian's referenced local linear bend."""
+
+    if mode == -1:
+        return _angle_grad(i, j, reference, coords) + _angle_grad(
+            reference,
+            j,
+            k,
+            coords,
+        )
+    if mode == -2:
+        return 0.5 * (
+            _dihedral_grad(i, j, reference, k, coords)
+            - _dihedral_grad(i, reference, j, k, coords)
+        )
+    raise ValueError(f"invalid linear-bend mode: {mode}")
 
 
 def _finite_difference_gradient(function, coords: np.ndarray, step: float) -> np.ndarray:

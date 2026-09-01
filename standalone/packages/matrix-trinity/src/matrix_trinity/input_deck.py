@@ -169,7 +169,7 @@ def run_optimization_input(
         assert deck.coordinates_angstrom is not None
         atoms = deck.atoms
         coordinates = deck.coordinates_angstrom
-    from matrix_core import principal_axis_orientation
+    from matrix_chem import principal_axis_orientation
 
     coordinates = principal_axis_orientation(
         coordinates,
@@ -190,10 +190,7 @@ def run_optimization_input(
         raise ValueError("generated MATRIX input did not pass topology validation")
     from matrix_smith import write_gicforge_build_sections
 
-    write_gicforge_build_sections(
-        xyzin,
-        fragment_mode="special-coordinates" if fragmented else None,
-    )
+    write_gicforge_build_sections(xyzin)
     method, basis = _method_basis(deck.model)
     backend = QMScanBackend(
         name=deck.backend,

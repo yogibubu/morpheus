@@ -19,7 +19,8 @@ from .contracts import (
     QMParameterPredicate,
     SemiexperimentalFitRequest,
 )
-from .fit import SemiexperimentalFitResult, fit_semiexperimental_geometry
+from .fit import fit_semiexperimental_geometry
+from .models import SemiexperimentalFitResult
 
 
 FINAL_VALIDATION_SCHEMA = "oracle.semiexp.final_validation.v1"

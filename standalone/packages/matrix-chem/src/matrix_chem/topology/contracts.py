@@ -4,6 +4,7 @@ MATRIX_XYZ_TOPOLOGY_SCHEMA = "matrix.xyz.topology.v3"
 MATRIX_XYZ_SYNTHONS_SCHEMA = "matrix.xyz.synthons.v3"
 MATRIX_XYZ_FRAGMENTS_SCHEMA = "matrix.xyz.fragments.v1"
 MATRIX_XYZ_VALIDATION_SCHEMA = "matrix.xyz.validation.v1"
+MATRIX_XYZ_AROMATICITY_SCHEMA = "matrix.xyz.aromaticity.v1"
 
 # Read-only migration identifiers. New ORACLE states emit only the MATRIX
 # schema above and never advertise an alternative scientific model.

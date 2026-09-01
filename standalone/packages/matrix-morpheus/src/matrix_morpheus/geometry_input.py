@@ -8,7 +8,7 @@ import numpy as np
 
 from matrix_chem.geometry_io import read_xyz_atoms_coords
 from matrix_chem.topology.elements import atomic_number, atomic_symbol
-from matrix_core.xyzin_geometry import read_xyzin_geometry
+from matrix_chem.xyzin_geometry import read_xyzin_geometry
 
 
 @dataclass(frozen=True)
@@ -23,10 +23,10 @@ class SemiexperimentalGeometryInput:
 def read_geometry_input(path: Path) -> SemiexperimentalGeometryInput:
     target = Path(path)
     suffix = target.suffix.lower()
-    from .msr_legacy import is_msr_legacy_file, read_msr_legacy_geometry
+    from .msr_import import is_msr_file, read_msr_geometry
 
-    if is_msr_legacy_file(target):
-        return read_msr_legacy_geometry(target)
+    if is_msr_file(target):
+        return read_msr_geometry(target)
     if target.name.lower() == "xyzin" or suffix in {"", ".xyzin"}:
         try:
             geometry = read_xyzin_geometry(target)

@@ -6,6 +6,9 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
 import json
 import os
+import platform
+import sys
+import subprocess
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -23,11 +26,13 @@ from matrix_chem import (
     write_validation_section,
 )
 from matrix_core import read_sectioned_lines, section_content, sha256_file
-
 from .config import OracleConfig, load_oracle_config
 from ._version import __version__
 from .atom_classes import classify_synthon_atoms
+from .atom_typing import gaff_translation_from_snapshot
 from .scope import oracle_scope_contract
+from .synthon_fingerprint import build_synthon_fingerprint
+from .cache import cache_key, write_cached
 
 
 ORACLE_REPORT_SCHEMA = "matrix.oracle.analysis.v2"
@@ -64,6 +69,10 @@ class OracleAnalysis:
     primitive_count: int
     primitive_b_matrix_rank: int
     primitive_b_matrix_sha256: str
+    cartesian_symmetry_status: str
+    symmetrization_required_threshold_angstrom: float | None
+    cartesian_symmetrization_decision: str
+    proposed_point_group: str
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -85,6 +94,7 @@ class OracleAnalysisRequest:
     topology_snapshot: Path | None = None
     config: Path | None = None
     validate: bool = True
+    cartesian_symmetrization: str = "inspect"
 
 
 def analyze_structure(
@@ -100,6 +110,7 @@ def analyze_structure(
     human_report: Path | None = None,
     topology_snapshot: Path | None = None,
     validate: bool = True,
+    cartesian_symmetrization: str = "inspect",
 ) -> OracleAnalysis:
     """Run ORACLE perception and write a versioned enriched molecular state."""
     settings = _coerce_config(config)
@@ -128,7 +139,11 @@ def analyze_structure(
         output_path,
         source_kind=source_kind,
         symmetry_thresholds=thresholds,
+        cartesian_symmetrization=cartesian_symmetrization,
     )
+    from matrix_fragments import write_fragment_build_section
+
+    write_fragment_build_section(output_path)
     validation = (
         write_validation_section(output_path)
         if validate
@@ -142,6 +157,7 @@ def analyze_structure(
     )
     synthon_data = _synthon_data(output_path)
     atom_classes = classify_synthon_atoms(synthon_data["atoms"])
+    gaff_translation = gaff_translation_from_snapshot(snapshot, synthon_data["atoms"])
     symmetry_metadata = _section_metadata(output_path, "SYMMETRY")
 
     snapshot_path = None
@@ -164,8 +180,13 @@ def analyze_structure(
             snapshot=snapshot,
             synthon_data=synthon_data,
             atom_classes=atom_classes.to_dict(),
+            gaff_translation=gaff_translation.to_dict(),
             symmetry_metadata=symmetry_metadata,
+            input_geometry=result.input_geometry,
+            accepted_geometry=result.geometry,
         )
+        if settings.paths.cache_dir is not None:
+            write_cached(settings.paths.cache_dir, str(report_payload["cache_key"]), report_payload)
     if report is not None:
         report_path = Path(report).expanduser().resolve()
         report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -181,12 +202,18 @@ def analyze_structure(
             encoding="utf-8",
         )
 
+    analysis_status = (
+        "AWAITING_CARTESIAN_SYMMETRY_CONFIRMATION"
+        if result.cartesian_symmetry_status == "QUASI_SYMMETRY"
+        and str(cartesian_symmetrization).strip().casefold() == "inspect"
+        else validation.status
+    )
     return OracleAnalysis(
         output=output_path,
         report=report_path,
         human_report=human_report_path,
         topology_snapshot=snapshot_path,
-        status=validation.status,
+        status=analysis_status,
         atom_count=result.geometry.natoms,
         point_group=symmetry.point_group,
         symmetry_operation_count=len(symmetry.operations),
@@ -198,6 +225,12 @@ def analyze_structure(
         primitive_count=len(primitive_contract.primitives),
         primitive_b_matrix_rank=primitive_contract.b_matrix_rank,
         primitive_b_matrix_sha256=primitive_contract.b_matrix_sha256,
+        cartesian_symmetry_status=result.cartesian_symmetry_status,
+        symmetrization_required_threshold_angstrom=(
+            result.symmetrization_required_threshold_angstrom
+        ),
+        cartesian_symmetrization_decision=result.cartesian_symmetrization_decision,
+        proposed_point_group=result.proposed_point_group,
     )
 
 
@@ -251,8 +284,12 @@ def write_oracle_analysis_reports(
         snapshot=snapshot,
         synthon_data=synthon_data,
         atom_classes=classify_synthon_atoms(synthon_data["atoms"]).to_dict(),
+        gaff_translation=gaff_translation_from_snapshot(
+            snapshot, synthon_data["atoms"]
+        ).to_dict(),
         symmetry_metadata=_section_metadata(target, "SYMMETRY"),
         atom_count=geometry.natoms,
+        accepted_geometry=geometry,
     )
     if json_output is not None:
         output = Path(json_output).expanduser().resolve()
@@ -286,15 +323,19 @@ def oracle_human_report_lines(payload: dict[str, Any]) -> list[str]:
         "------------------",
         "ORACLE owns: perception, symmetry, synthons/classes, redundant PIC/B, L1-to-PL1.",
         "SMITH owns SONIC; LINK owns optimization/scans; MORPHEUS owns vibrational symmetry;",
-        "ARCHITECT owns Hessian reduction and ZION; TRINITY owns multilevel derivatives.",
+        "ARCHITECT owns Hessian reduction and ZAFF; TRINITY owns multilevel derivatives.",
         "",
         "GEOMETRY AND SYMMETRY",
         "---------------------",
         f"Atoms: {geometry['atom_count']}",
         f"Point group: {geometry['point_group']}",
+        f"Proposed point group: {geometry['proposed_point_group']}",
         f"Operations: {geometry['symmetry_operation_count']}",
         f"Maximum operation residual / A: {geometry['symmetry_max_deviation_angstrom']:.6e}",
+        f"Input maximum operation residual / A: {geometry['input_symmetry_max_deviation_angstrom']:.6e}",
         f"Projection: {geometry['projection_status']}",
+        f"Cartesian decision: {geometry['cartesian_symmetrization_decision']}",
+        f"Required symmetrization threshold / A: {geometry['symmetrization_required_threshold_angstrom'] if geometry['symmetrization_required_threshold_angstrom'] is not None else 'NOT_REQUIRED'}",
         "",
         "TOPOLOGY",
         "--------",
@@ -365,10 +406,34 @@ def _analysis_report_payload(
     snapshot: dict[str, Any],
     synthon_data: dict[str, Any],
     atom_classes: dict[str, Any],
+    gaff_translation: dict[str, Any],
     symmetry_metadata: dict[str, str],
     atom_count: int | None = None,
+    input_geometry: Any | None = None,
+    accepted_geometry: Any | None = None,
 ) -> dict[str, Any]:
     source_path = Path(source)
+    bond_order_by_atoms = {
+        tuple(item["atoms"]): float(item["value"])
+        for item in snapshot.get("bond_orders", ())
+    }
+    fingerprint = build_synthon_fingerprint(
+        synthon_data["atoms"],
+        bonds=tuple(
+            (
+                int(left),
+                int(right),
+                bond_order_by_atoms.get((left, right), 1.0),
+            )
+            for left, right in snapshot.get("bonds", ())
+        ),
+    )
+    try:
+        git_commit = subprocess.check_output(("git", "rev-parse", "HEAD"), text=True, stderr=subprocess.DEVNULL).strip()
+        git_branch = subprocess.check_output(("git", "branch", "--show-current"), text=True, stderr=subprocess.DEVNULL).strip()
+        git_dirty = bool(subprocess.run(("git", "diff", "--quiet"), check=False).returncode)
+    except (OSError, subprocess.CalledProcessError):
+        git_commit, git_branch, git_dirty = None, None, None
     return {
         "schema": ORACLE_REPORT_SCHEMA,
         "oracle_version": oracle_version(),
@@ -378,6 +443,15 @@ def _analysis_report_payload(
         "output": str(output),
         "output_sha256": sha256_file(output),
         "source_kind": source_kind,
+        "cache_key": cache_key(str(source_path), source_kind, thresholds.distance_angstrom,
+                                thresholds.inertia_relative, thresholds.max_rotation_order),
+        "provenance": {
+            "python": sys.version.split()[0],
+            "platform": platform.platform(),
+            "implementation": platform.python_implementation(),
+            "backend": "matrix-chem-reference",
+            "git_commit": git_commit, "git_branch": git_branch, "git_dirty": git_dirty,
+        },
         "thresholds": {
             "distance_angstrom": thresholds.distance_angstrom,
             "inertia_relative": thresholds.inertia_relative,
@@ -386,6 +460,9 @@ def _analysis_report_payload(
         "geometry": {
             "atom_count": int(atom_count if atom_count is not None else len(synthon_data["atoms"])),
             "point_group": symmetry.point_group,
+            "proposed_point_group": symmetry_metadata.get(
+                "PROPOSED_POINT_GROUP", symmetry.point_group
+            ),
             "symmetry_operation_count": len(symmetry.operations),
             "symmetry_max_deviation_angstrom": symmetry.max_deviation,
             "symmetry_mean_deviation_angstrom": symmetry.mean_deviation,
@@ -395,6 +472,27 @@ def _analysis_report_payload(
             ),
             "projection_rms_displacement_angstrom": _optional_float(
                 symmetry_metadata.get("CARTESIAN_PROJECTION_RMS_DISPLACEMENT_ANGSTROM")
+            ),
+            "cartesian_symmetry_status": symmetry_metadata.get(
+                "CARTESIAN_SYMMETRY_STATUS", "UNKNOWN"
+            ),
+            "symmetrization_required_threshold_angstrom": _optional_float(
+                symmetry_metadata.get(
+                    "CARTESIAN_SYMMETRIZATION_REQUIRED_THRESHOLD_ANGSTROM"
+                )
+            ),
+            "input_symmetry_max_deviation_angstrom": _optional_float(
+                symmetry_metadata.get("INPUT_MAX_OPERATION_DEVIATION_ANGSTROM")
+            )
+            if symmetry_metadata.get("INPUT_MAX_OPERATION_DEVIATION_ANGSTROM")
+            is not None
+            else float(symmetry.max_deviation),
+            "cartesian_symmetrization_decision": symmetry_metadata.get(
+                "CARTESIAN_SYMMETRIZATION_DECISION", "UNKNOWN"
+            ),
+            "input_cartesian_geometry": _cartesian_geometry_payload(input_geometry),
+            "accepted_cartesian_geometry": _cartesian_geometry_payload(
+                accepted_geometry
             ),
         },
         "topology": snapshot,
@@ -426,6 +524,8 @@ def _analysis_report_payload(
         },
         "continuous_descriptors": synthon_data,
         "synthon_atom_classes": atom_classes,
+        "synthon_fingerprint": fingerprint.to_dict(),
+        "gaff_atom_types": gaff_translation,
         "validation": {
             "status": validation.status,
             "messages": [asdict(message) for message in validation.messages],
@@ -443,6 +543,7 @@ def _run_analysis_request(request: OracleAnalysisRequest) -> OracleAnalysis:
         human_report=request.human_report,
         topology_snapshot=request.topology_snapshot,
         validate=request.validate,
+        cartesian_symmetrization=request.cartesian_symmetrization,
     )
 
 
@@ -450,7 +551,9 @@ def _resolved_workers(requested: int, count: int) -> int:
     if requested < 0:
         raise ValueError("ORACLE worker count must be non-negative")
     available = max(1, int(os.cpu_count() or 1))
-    return min(count, available if requested == 0 else max(1, int(requested)))
+    cap = max(0, int(os.environ.get("ORACLE_MAX_WORKERS", "0") or 0))
+    limit = cap or available
+    return min(count, limit if requested == 0 else max(1, min(int(requested), limit)))
 
 
 def _csv(values: Sequence[Any]) -> str:
@@ -559,6 +662,20 @@ def _section_columns(content: list[str]) -> tuple[str, ...]:
 
 def _optional_float(value: str | None) -> float | None:
     return float(value) if value not in {None, ""} else None
+
+
+def _cartesian_geometry_payload(geometry: Any | None) -> dict[str, Any] | None:
+    if geometry is None:
+        return None
+    return {
+        "atoms": [str(atom) for atom in geometry.atoms],
+        "coordinates_angstrom": [
+            [float(component) for component in row]
+            for row in geometry.coordinates_angstrom
+        ],
+        "charge": geometry.charge,
+        "multiplicity": geometry.multiplicity,
+    }
 
 
 def _signature_value(value: str) -> int | float | bool | str:

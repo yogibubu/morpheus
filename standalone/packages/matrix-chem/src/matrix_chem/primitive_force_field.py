@@ -49,6 +49,9 @@ class PrimitiveFunctionalPolicy:
     angle_form: str = "cosine"
     # Provisional median of the B3LYP/6-31G(d) H2, HF and CO radial scans.
     morse_alpha_scale: float = 2.215
+    # Optional MM3-derived Morse depths in primitive order.  Positive entries
+    # seed D_e while the target QM gradient/curvature determine alpha and R0.
+    morse_depth_priors_hartree: tuple[float, ...] = ()
     torsion_two_term_condition_max: float = 1.0e8
     torsion_two_term_amplification_max: float = 1.0e4
 
@@ -1306,6 +1309,28 @@ def _stretch_function_parameters(
             "EXACT_LOCAL_GRADIENT_AND_CURVATURE_IN_1_OVER_R",
             None,
         )
+    depth_priors = tuple(
+        float(policy.morse_depth_priors_hartree[index])
+        for index in indices
+        if index < len(policy.morse_depth_priors_hartree)
+        and math.isfinite(policy.morse_depth_priors_hartree[index])
+        and policy.morse_depth_priors_hartree[index] > 0.0
+    )
+    if depth_priors:
+        matched = _morse_fixed_depth_local_match(
+            float(np.mean(depth_priors)),
+            q_qm,
+            gradient,
+            curvature,
+        )
+        if matched is not None:
+            depth, r0, alpha = matched
+            return (
+                "morse",
+                (("R0", r0), ("D", depth), ("ALPHA", alpha)),
+                "MM3_MORSE_D_E_PRIOR_WITH_EXACT_QM_LOCAL_GRADIENT_AND_CURVATURE",
+                "MrsStr1",
+            )
     alpha_values = []
     bond_orders = []
     for index in indices:
@@ -1351,6 +1376,65 @@ def _stretch_function_parameters(
         "ALPHA_FROM_SYNTHON_COVALENT_RADII_AND_BOND_ORDER;D_R0_MATCH_LOCAL_G_AND_H",
         "MrsStr1",
     )
+
+
+def _morse_fixed_depth_local_match(
+    depth: float,
+    reference: float,
+    gradient: float,
+    curvature: float,
+) -> tuple[float, float, float] | None:
+    """Keep D_e and match the local first and second derivatives exactly."""
+
+    if not (
+        math.isfinite(depth)
+        and depth > 0.0
+        and math.isfinite(reference)
+        and reference > 0.0
+        and math.isfinite(gradient)
+        and math.isfinite(curvature)
+        and curvature > 0.0
+    ):
+        return None
+    if abs(gradient) <= 1.0e-12 * max(1.0, curvature):
+        return depth, reference, math.sqrt(curvature / (2.0 * depth))
+    reduced_gradient = gradient / (2.0 * depth)
+    reduced_curvature = curvature / (2.0 * depth)
+    target = reduced_gradient**2 / reduced_curvature
+
+    def equation(exponent: float) -> float:
+        return exponent * (1.0 - exponent) ** 2 / (2.0 * exponent - 1.0)
+
+    if target <= 0.0 or not math.isfinite(target):
+        return None
+    if gradient > 0.0:
+        lower, upper = 0.5 + 1.0e-12, 1.0 - 1.0e-12
+        for _ in range(120):
+            middle = 0.5 * (lower + upper)
+            if equation(middle) > target:
+                lower = middle
+            else:
+                upper = middle
+    else:
+        lower, upper = 1.0 + 1.0e-12, 2.0
+        while equation(upper) < target and upper < 1.0e8:
+            upper *= 2.0
+        if upper >= 1.0e8:
+            return None
+        for _ in range(120):
+            middle = 0.5 * (lower + upper)
+            if equation(middle) < target:
+                lower = middle
+            else:
+                upper = middle
+    exponent = 0.5 * (lower + upper)
+    alpha = reduced_gradient / (exponent * (1.0 - exponent))
+    if not math.isfinite(alpha) or alpha <= 0.0:
+        return None
+    r0 = reference + math.log(exponent) / alpha
+    if not math.isfinite(r0) or r0 <= 0.0:
+        return None
+    return depth, r0, alpha
 
 
 def _angle_function_parameters(

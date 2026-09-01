@@ -307,9 +307,9 @@ QUICKSTART: dict[str, tuple[str, ...]] = {
         "matrix validate molecule.xyzin",
     ),
     "qm_adapters": (
-        "matrix qm remote-submit calc.gjf --engine gdv32 --host enzo@oracle",
-        "matrix qm remote-status --host enzo@oracle",
-        "matrix qm remote-fetch JOB --host enzo@oracle --dest runs",
+        "matrix qm remote-submit calc.gjf --engine gdv32 --machine ORACLE",
+        "matrix qm remote-status --machine ORACLE",
+        "matrix qm remote-fetch JOB --machine ORACLE --dest runs",
         "matrix gaussian promote-fchk calc.fchk molecule.xyzin",
         "matrix gaussian promote-rovib calc.log molecule.xyzin",
         "matrix gaussian promote-electronic calc.log molecule.xyzin",
@@ -346,7 +346,7 @@ QUICKSTART: dict[str, tuple[str, ...]] = {
         "matrix dvr run --xyzin molecule.xyzin",
         "matrix dvr collect --xyzin molecule.xyzin",
     ),
-    "gui": ("oracle-gui molecule.xyzin", "matrix gui ORACLE molecule.xyzin"),
+    "gui": ("matrix gui molecule.xyzin", "matrix gui --project-root ./project"),
 }
 
 

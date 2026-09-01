@@ -5,7 +5,14 @@ from pathlib import Path
 
 import numpy as np
 
-from matrix_chem import read_enriched_xyz
+from matrix_chem import (
+    DEFAULT_SPECIAL_EDGE_EFFECTIVE_ORDER,
+    hbond_angular_factor,
+    perceive_aromatic_ring_atoms,
+    prepare_hydrogen_bond_recognition,
+    read_enriched_xyz,
+)
+from matrix_chem.topology.elements import atomic_number
 from matrix_chem.topology.contracts import (
     MATRIX_XYZ_FRAGMENTS_SCHEMA,
     MATRIX_XYZ_SYNTHONS_SCHEMA,
@@ -21,7 +28,42 @@ from matrix_core import read_sectioned_lines, replace_section, section_content
 
 ORACLE_XYZ_FRAGMENT_LIBRARY_SCHEMA = "oracle.xyz.fragment_library.v1"
 ORACLE_XYZ_ASSEMBLY_SCHEMA = "oracle.xyz.assembly.v1"
-ORACLE_XYZ_INTERACTION_CENTERS_SCHEMA = "oracle.xyz.interaction_centers.v1"
+ORACLE_XYZ_INTERACTION_CENTERS_SCHEMA = "oracle.xyz.interaction_centers.v2"
+SUPPORTED_INTERACTION_CENTER_SCHEMAS = (
+    "oracle.xyz.interaction_centers.v1",
+    ORACLE_XYZ_INTERACTION_CENTERS_SCHEMA,
+)
+
+GEOMETRIC_PARAMETER_BINDING_SCHEMA = "matrix.geometric_parameter_source_binding.v1"
+GEOMETRIC_PARAMETER_SOURCE_BINDINGS = {
+    "L1_geometry_only": {
+        "level_family": "L1",
+        "charges": "electronegativity_estimated",
+        "bond_orders": "Pauling_estimated",
+        "cm5_mayer_allowed": False,
+        "required_electronic_source": "ORACLE_geometry_topology",
+    },
+    "L2_PL2_geometry_only": {
+        "level_family": "L2_PL2",
+        "charges": "CM5",
+        "bond_orders": "Mayer",
+        "cm5_mayer_allowed": True,
+        "required_electronic_source": "LCB26_enriched_record",
+    },
+}
+
+
+def geometric_parameter_source_binding(parameter_source: str) -> dict[str, object]:
+    """Return the immutable electronic-observable binding for a geometry fit."""
+    try:
+        binding = GEOMETRIC_PARAMETER_SOURCE_BINDINGS[str(parameter_source)]
+    except KeyError as exc:
+        raise ValueError(f"unsupported geometric parameter source: {parameter_source}") from exc
+    return {
+        "schema": GEOMETRIC_PARAMETER_BINDING_SCHEMA,
+        "parameter_source": str(parameter_source),
+        **binding,
+    }
 
 REQUIRED_TOPOLOGY_SCHEMA = MATRIX_XYZ_TOPOLOGY_SCHEMA
 REQUIRED_SYNTHONS_SCHEMA = MATRIX_XYZ_SYNTHONS_SCHEMA
@@ -139,10 +181,25 @@ class FragmentRecord:
 
 
 @dataclass(frozen=True)
+class AttachmentSiteRecord:
+    """Reusable covalent attachment metadata owned by one rigid fragment."""
+
+    identifier: str
+    fragment_id: str
+    connecting_atom: int
+    direction: tuple[float, float, float]
+    label: str
+    leaving_atoms: tuple[int, ...] = ()
+    allowed_elements: tuple[str, ...] = ()
+    allowed_bond_orders: tuple[float, ...] = (1.0,)
+
+
+@dataclass(frozen=True)
 class FragmentDefinition:
     strategy: str
     reference_fragment: str
     fragments: tuple[FragmentRecord, ...]
+    attachment_sites: tuple[AttachmentSiteRecord, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -153,6 +210,7 @@ class InteractionCenterRecord:
     atoms: tuple[int, ...]
     center: tuple[float, float, float]
     source: str
+    hapticity: int = 0
 
 
 @dataclass(frozen=True)
@@ -163,6 +221,28 @@ class AtomCenterInteractionRecord:
     center_id: str
     score: float
     source: str
+    effective_order: float = DEFAULT_SPECIAL_EDGE_EFFECTIVE_ORDER
+
+
+@dataclass(frozen=True)
+class HapticInteractionRequest:
+    """ORACLE-declared metal--donor-set center with explicit hapticity."""
+
+    metal_atom: int
+    donor_atoms: tuple[int, ...]
+    effective_order: float = DEFAULT_SPECIAL_EDGE_EFFECTIVE_ORDER
+    source: str = "ORACLE_COORDINATION_INPUT"
+
+    def __post_init__(self) -> None:
+        donors = tuple(int(atom) for atom in self.donor_atoms)
+        if len(donors) < 2 or len(set(donors)) != len(donors):
+            raise ValueError("haptic donor atoms must be unique and hapticity must be at least two")
+        order = float(self.effective_order)
+        if not np.isfinite(order) or order <= 0.0:
+            raise ValueError("haptic effective order must be finite and positive")
+        object.__setattr__(self, "metal_atom", int(self.metal_atom))
+        object.__setattr__(self, "donor_atoms", donors)
+        object.__setattr__(self, "effective_order", order)
 
 
 @dataclass(frozen=True)
@@ -260,6 +340,20 @@ def fragment_build_section_lines(definition: FragmentDefinition) -> list[str]:
         for label, axis in zip(("X", "Y", "Z"), fragment.frame):
             axes.append(f"{label}={axis[0]:.12g},{axis[1]:.12g},{axis[2]:.12g}")
         lines.append(f"{fragment.identifier} {' '.join(axes)}")
+    lines.append("[ATTACHMENT_SITES]")
+    if not definition.attachment_sites:
+        lines.append("NONE")
+    for site in definition.attachment_sites:
+        leaving = ",".join(str(atom) for atom in site.leaving_atoms) or "NONE"
+        elements = ",".join(site.allowed_elements) or "ANY"
+        orders = ",".join(f"{value:.12g}" for value in site.allowed_bond_orders)
+        direction = ",".join(f"{value:.12g}" for value in site.direction)
+        lines.append(
+            f"{site.identifier} FRAGMENT={site.fragment_id} LABEL={site.label} "
+            f"CONNECTING_ATOM={site.connecting_atom} LEAVING_ATOMS={leaving} "
+            f"DIRECTION={direction} ALLOWED_ELEMENTS={elements} "
+            f"ALLOWED_BOND_ORDERS={orders}"
+        )
     return lines
 
 
@@ -311,12 +405,17 @@ def write_fragment_electronic_states(
         strategy=_section_value(section, "STRATEGY") or "CONNECTED_COMPONENTS",
         reference_fragment=reference_fragment,
         fragments=tuple(fragments),
+        attachment_sites=read_fragment_attachment_sites(target),
     )
     replace_section(target, "FRAGMENTS", fragment_build_section_lines(definition))
     return definition
 
 
-def build_interaction_center_definition_from_xyzin(path: Path) -> InteractionCenterDefinition:
+def build_interaction_center_definition_from_xyzin(
+    path: Path,
+    *,
+    haptic_interactions: tuple[HapticInteractionRequest, ...] = (),
+) -> InteractionCenterDefinition:
     """Build topology-backed bond/ring centers and atom-center candidates."""
     target = Path(path)
     validate_fragment_prerequisites(target)
@@ -325,6 +424,13 @@ def build_interaction_center_definition_from_xyzin(path: Path) -> InteractionCen
     coords = np.asarray(geometry.coordinates_angstrom, dtype=float)
     bonds = _topology_bonds(lines, natoms=geometry.natoms)
     rings = _topology_rings(lines, natoms=geometry.natoms)
+    atomic_numbers = tuple(int(atomic_number(atom) or 0) for atom in geometry.atoms)
+    aromatic_rings = _aromatic_ring_atom_sets(
+        lines,
+        rings=rings,
+        coordinates_angstrom=coords,
+        atomic_numbers=atomic_numbers,
+    )
     centers: list[InteractionCenterRecord] = []
 
     for left, right in bonds:
@@ -336,6 +442,7 @@ def build_interaction_center_definition_from_xyzin(path: Path) -> InteractionCen
                 atoms=(left, right),
                 center=_center(coords, (left, right)),
                 source="TOPOLOGY_BOND",
+                hapticity=2,
             )
         )
     for ring_index, atoms in _interaction_ring_centers(rings, geometry.atoms):
@@ -346,19 +453,71 @@ def build_interaction_center_definition_from_xyzin(path: Path) -> InteractionCen
                 label=f"ring_{ring_index}",
                 atoms=atoms,
                 center=_center(coords, atoms),
-                source="TOPOLOGY_RING",
+                source=(
+                    "TOPOLOGY_AROMATIC_RING"
+                    if frozenset(atoms) in aromatic_rings
+                    else "TOPOLOGY_RING"
+                ),
+                hapticity=len(atoms),
             )
         )
 
-    interactions = _atom_center_interactions(
+    declared_interactions: list[AtomCenterInteractionRecord] = []
+    for request in haptic_interactions:
+        if request.metal_atom < 1 or request.metal_atom > geometry.natoms:
+            raise ValueError("haptic metal atom lies outside the geometry")
+        if any(atom < 1 or atom > geometry.natoms for atom in request.donor_atoms):
+            raise ValueError("haptic donor atom lies outside the geometry")
+        if not _is_metal_symbol(_atom_symbol(geometry.atoms, request.metal_atom)):
+            raise ValueError("haptic interaction center atom must be a metal")
+        donor_key = frozenset(request.donor_atoms)
+        center = next(
+            (item for item in centers if frozenset(item.atoms) == donor_key),
+            None,
+        )
+        if center is None:
+            center = InteractionCenterRecord(
+                identifier=f"C{len(centers) + 1:03d}",
+                kind="HAPTIC_CENTER",
+                label=f"eta{len(request.donor_atoms)}_" + "_".join(
+                    str(atom) for atom in request.donor_atoms
+                ),
+                atoms=request.donor_atoms,
+                center=_center(coords, request.donor_atoms),
+                source=request.source,
+                hapticity=len(request.donor_atoms),
+            )
+            centers.append(center)
+        declared_interactions.append(
+            AtomCenterInteractionRecord(
+                identifier="",
+                kind=f"METAL_ETA{len(request.donor_atoms)}_CENTER",
+                atom=request.metal_atom,
+                center_id=center.identifier,
+                score=1.0,
+                source=request.source,
+                effective_order=request.effective_order,
+            )
+        )
+
+    inferred_interactions = _atom_center_interactions(
         tuple(centers),
         bonds=bonds,
         coords=coords,
         natoms=geometry.natoms,
         atom_symbols=geometry.atoms,
     )
+    aromatic_hbonds = _aromatic_hydrogen_center_interactions(
+        tuple(centers),
+        bonds=bonds,
+        coordinates_angstrom=coords,
+        atomic_numbers=atomic_numbers,
+    )
+    interactions = _merge_atom_center_interactions(
+        (*declared_interactions, *inferred_interactions, *aromatic_hbonds)
+    )
     return InteractionCenterDefinition(
-        strategy="TOPOLOGY_EQUIDISTANT_CENTER_CANDIDATES",
+        strategy="TOPOLOGY_HAPTIC_AND_HBOND_CENTER_CANDIDATES",
         centers=tuple(centers),
         interactions=interactions,
     )
@@ -382,7 +541,8 @@ def interaction_center_section_lines(definition: InteractionCenterDefinition) ->
             x, y, z = center.center
             lines.append(
                 f"{center.identifier} KIND={center.kind} LABEL={center.label} "
-                f"ATOMS={atoms} X={x:.12g} Y={y:.12g} Z={z:.12g} SOURCE={center.source}"
+                f"ATOMS={atoms} X={x:.12g} Y={y:.12g} Z={z:.12g} "
+                f"HAPTICITY={center.hapticity} SOURCE={center.source}"
             )
     else:
         lines.append("NONE")
@@ -392,17 +552,24 @@ def interaction_center_section_lines(definition: InteractionCenterDefinition) ->
             lines.append(
                 f"{interaction.identifier} KIND={interaction.kind} ATOM={interaction.atom} "
                 f"CENTER={interaction.center_id} SCORE={interaction.score:.8g} "
-                f"SOURCE={interaction.source}"
+                f"ORDER={interaction.effective_order:.8g} SOURCE={interaction.source}"
             )
     else:
         lines.append("NONE")
     return lines
 
 
-def write_interaction_center_section(path: Path) -> InteractionCenterDefinition:
+def write_interaction_center_section(
+    path: Path,
+    *,
+    haptic_interactions: tuple[HapticInteractionRequest, ...] = (),
+) -> InteractionCenterDefinition:
     """Materialize virtual bond/ring centers and atom-center interaction candidates."""
     target = Path(path)
-    definition = build_interaction_center_definition_from_xyzin(target)
+    definition = build_interaction_center_definition_from_xyzin(
+        target,
+        haptic_interactions=haptic_interactions,
+    )
     replace_section(target, "INTERACTION_CENTERS", interaction_center_section_lines(definition))
     return definition
 
@@ -467,6 +634,108 @@ def read_fragment_records(path: Path) -> tuple[FragmentRecord, ...]:
     return tuple(records)
 
 
+def read_fragment_attachment_sites(path: Path) -> tuple[AttachmentSiteRecord, ...]:
+    """Read optional reusable attachment sites from a built fragment section."""
+
+    lines = read_sectioned_lines(Path(path))
+    section = section_content(lines, "FRAGMENTS")
+    if not section or _section_value(section, "STATUS") != "BUILT":
+        return ()
+    fragments = {record.identifier: record for record in read_fragment_records(path)}
+    records: list[AttachmentSiteRecord] = []
+    identifiers: set[str] = set()
+    for row in _subsection(section, "ATTACHMENT_SITES"):
+        if not row.strip() or row.strip().upper() == "NONE":
+            continue
+        parts = row.split()
+        identifier = parts[0]
+        if identifier in identifiers:
+            raise FragmentContractError(f"duplicate attachment-site identifier: {identifier}")
+        identifiers.add(identifier)
+        fields = _key_values(parts[1:])
+        fragment_id = fields.get("FRAGMENT", "")
+        if fragment_id not in fragments:
+            raise FragmentContractError(
+                f"attachment site {identifier} references unknown fragment {fragment_id}"
+            )
+        try:
+            connecting_atom = int(fields["CONNECTING_ATOM"])
+            direction = tuple(float(value) for value in fields["DIRECTION"].split(","))
+            leaving = _parse_int_list(
+                "" if fields.get("LEAVING_ATOMS", "NONE").upper() == "NONE"
+                else fields["LEAVING_ATOMS"]
+            )
+            orders = tuple(
+                float(value)
+                for value in fields.get("ALLOWED_BOND_ORDERS", "1").split(",")
+            )
+        except (KeyError, ValueError) as exc:
+            raise FragmentContractError(
+                f"invalid attachment-site fields for {identifier}"
+            ) from exc
+        allowed = set(fragments[fragment_id].atoms)
+        if connecting_atom not in allowed or any(atom not in allowed for atom in leaving):
+            raise FragmentContractError(
+                f"attachment site {identifier} contains atoms outside {fragment_id}"
+            )
+        vector = np.asarray(direction, dtype=float)
+        if vector.shape != (3,) or not np.all(np.isfinite(vector)):
+            raise FragmentContractError(
+                f"attachment site {identifier} needs a finite 3-vector direction"
+            )
+        norm = float(np.linalg.norm(vector))
+        if norm <= RANK_TOLERANCE:
+            raise FragmentContractError(
+                f"attachment site {identifier} direction must be non-zero"
+            )
+        if not orders or any(not np.isfinite(value) or value <= 0.0 for value in orders):
+            raise FragmentContractError(
+                f"attachment site {identifier} has invalid allowed bond orders"
+            )
+        elements_text = fields.get("ALLOWED_ELEMENTS", "ANY")
+        elements = (
+            ()
+            if elements_text.upper() == "ANY"
+            else tuple(value for value in elements_text.split(",") if value)
+        )
+        records.append(
+            AttachmentSiteRecord(
+                identifier=identifier,
+                fragment_id=fragment_id,
+                connecting_atom=connecting_atom,
+                direction=tuple(float(value) for value in vector / norm),
+                label=fields.get("LABEL", identifier),
+                leaving_atoms=tuple(leaving),
+                allowed_elements=elements,
+                allowed_bond_orders=orders,
+            )
+        )
+    return tuple(records)
+
+
+def write_fragment_attachment_sites(
+    path: Path,
+    attachment_sites: tuple[AttachmentSiteRecord, ...],
+) -> FragmentDefinition:
+    """Persist validated attachment sites without changing fragment geometry."""
+
+    target = Path(path)
+    section = section_content(read_sectioned_lines(target), "FRAGMENTS")
+    fragments = read_fragment_records(target)
+    if not fragments:
+        raise FragmentContractError("attachment sites require a built #FRAGMENTS section")
+    definition = FragmentDefinition(
+        strategy=_section_value(section, "STRATEGY") or "CONNECTED_COMPONENTS",
+        reference_fragment=_section_value(section, "REFERENCE_FRAGMENT"),
+        fragments=fragments,
+        attachment_sites=tuple(attachment_sites),
+    )
+    # Round-trip validation is centralized in the reader.
+    replace_section(target, "FRAGMENTS", fragment_build_section_lines(definition))
+    read_fragment_attachment_sites(target)
+    return definition
+
+
 def _optional_integer_text(value: int | None) -> str:
     return "UNSPECIFIED" if value is None else str(int(value))
 
@@ -486,7 +755,7 @@ def read_interaction_center_definition(path: Path) -> InteractionCenterDefinitio
     section = section_content(lines, "INTERACTION_CENTERS")
     if not section:
         return InteractionCenterDefinition(strategy="NONE", centers=(), interactions=())
-    if section[0].strip() != f"SCHEMA {ORACLE_XYZ_INTERACTION_CENTERS_SCHEMA}":
+    if not schema_line_supported(section[0], SUPPORTED_INTERACTION_CENTER_SCHEMAS):
         raise FragmentContractError("invalid #INTERACTION_CENTERS schema")
     status = _section_value(section, "STATUS")
     if status != "BUILT":
@@ -511,6 +780,7 @@ def read_interaction_center_definition(path: Path) -> InteractionCenterDefinitio
                         float(fields.get("Z", "0.0")),
                     ),
                     source=fields.get("SOURCE", "UNKNOWN"),
+                    hapticity=int(fields.get("HAPTICITY", len(atoms))),
                 )
             )
         except ValueError as exc:
@@ -534,6 +804,9 @@ def read_interaction_center_definition(path: Path) -> InteractionCenterDefinitio
                     center_id=center_id,
                     score=float(fields.get("SCORE", "1.0")),
                     source=fields.get("SOURCE", "UNKNOWN"),
+                    effective_order=float(
+                        fields.get("ORDER", DEFAULT_SPECIAL_EDGE_EFFECTIVE_ORDER)
+                    ),
                 )
             )
         except (KeyError, ValueError) as exc:
@@ -630,6 +903,51 @@ def _interaction_ring_centers(
     return tuple(accepted)
 
 
+def _aromatic_ring_atom_sets(
+    lines: list[str],
+    *,
+    rings: tuple[tuple[int, tuple[int, ...]], ...],
+    coordinates_angstrom: np.ndarray,
+    atomic_numbers: tuple[int, ...],
+) -> set[frozenset[int]]:
+    """Read ORACLE's persisted aromatic assignment, with geometry fallback."""
+
+    assigned: set[frozenset[int]] = set()
+    aromatic_section = section_content(lines, "AROMATICITY")
+    for row in aromatic_section:
+        parts = row.split()
+        if not parts or parts[0].upper() != "RING":
+            continue
+        fields = _key_values(parts[2:])
+        atoms = _parse_int_list(fields.get("ATOMS", ""))
+        if atoms:
+            assigned.add(frozenset(atoms))
+    if assigned:
+        return assigned
+    topology = section_content(lines, "TOPOLOGY")
+    aromatic_atoms: set[int] = set()
+    for row in _subsection(topology, "AROMATICITY"):
+        parts = row.split()
+        if parts and parts[0].upper() == "ATOMS" and parts[1:]:
+            aromatic_atoms.update(
+                int(value) for value in parts[1:] if value.upper() != "NONE"
+            )
+    if aromatic_atoms:
+        return {
+            frozenset(atoms)
+            for _index, atoms in rings
+            if set(atoms).issubset(aromatic_atoms)
+        }
+    try:
+        perceived = perceive_aromatic_ring_atoms(coordinates_angstrom, atomic_numbers)
+    except ValueError:
+        perceived = ()
+    return {
+        frozenset(int(atom) + 1 for atom in ring)
+        for ring in perceived
+    }
+
+
 def _valid_interaction_ring_atoms(
     atoms: tuple[int, ...],
     atom_symbols: tuple[str, ...],
@@ -688,6 +1006,101 @@ def _atom_center_interactions(
     )
 
 
+def _aromatic_hydrogen_center_interactions(
+    centers: tuple[InteractionCenterRecord, ...],
+    *,
+    bonds: tuple[tuple[int, int], ...],
+    coordinates_angstrom: np.ndarray,
+    atomic_numbers: tuple[int, ...],
+) -> tuple[AtomCenterInteractionRecord, ...]:
+    """Return intermolecular donor--H...aromatic-centroid contacts.
+
+    Donor chemistry comes from the shared MATRIX H-bond recognition plan.
+    Intramolecular contacts remain excluded from SONIC because they introduce
+    additional cycles; the separately recognized symmetric proton-transfer
+    motif retains its existing explicit exception.
+    """
+
+    aromatic = tuple(
+        center
+        for center in centers
+        if center.kind == "RING_CENTER" and center.source == "TOPOLOGY_AROMATIC_RING"
+    )
+    if not aromatic:
+        return ()
+    zero_based_bonds = tuple((left - 1, right - 1) for left, right in bonds)
+    plan = prepare_hydrogen_bond_recognition(atomic_numbers, zero_based_bonds)
+    xyz = np.asarray(coordinates_angstrom, dtype=float)
+    results: list[AtomCenterInteractionRecord] = []
+    for donor, hydrogen in plan.donor_hydrogens:
+        donor_vector = xyz[donor] - xyz[hydrogen]
+        donor_norm = float(np.linalg.norm(donor_vector))
+        if donor_norm <= 1.0e-12:
+            continue
+        for center in aromatic:
+            ring_indices = tuple(atom - 1 for atom in center.atoms)
+            if any(plan.component_by_atom[hydrogen] == plan.component_by_atom[atom] for atom in ring_indices):
+                continue
+            center_vector = np.asarray(center.center, dtype=float) - xyz[hydrogen]
+            distance = float(np.linalg.norm(center_vector))
+            if distance <= 1.0e-12 or distance > plan.cutoff_angstrom:
+                continue
+            angle = float(
+                np.arccos(
+                    np.clip(
+                        np.dot(donor_vector, center_vector) / (donor_norm * distance),
+                        -1.0,
+                        1.0,
+                    )
+                )
+            )
+            if angle < plan.minimum_angle_radians:
+                continue
+            angular = float(hbond_angular_factor(angle))
+            if angular < plan.selector_threshold:
+                continue
+            radial = max(0.0, 1.0 - distance / plan.cutoff_angstrom)
+            score = radial * angular
+            if score <= 0.0:
+                continue
+            results.append(
+                AtomCenterInteractionRecord(
+                    identifier="",
+                    kind="DONOR_H_AROMATIC_RING_CENTER",
+                    atom=hydrogen + 1,
+                    center_id=center.identifier,
+                    score=score,
+                    source="SHARED_HBOND_DONOR_TO_AROMATIC_CENTER",
+                    effective_order=DEFAULT_SPECIAL_EDGE_EFFECTIVE_ORDER,
+                )
+            )
+    return tuple(results)
+
+
+def _merge_atom_center_interactions(
+    interactions: tuple[AtomCenterInteractionRecord, ...],
+) -> tuple[AtomCenterInteractionRecord, ...]:
+    """Deduplicate declared/inferred contacts, preferring declared provenance."""
+
+    selected: dict[tuple[int, str], AtomCenterInteractionRecord] = {}
+    for interaction in interactions:
+        key = (int(interaction.atom), str(interaction.center_id))
+        if key not in selected:
+            selected[key] = interaction
+    return tuple(
+        AtomCenterInteractionRecord(
+            identifier=f"I{index:03d}",
+            kind=interaction.kind,
+            atom=interaction.atom,
+            center_id=interaction.center_id,
+            score=interaction.score,
+            source=interaction.source,
+            effective_order=interaction.effective_order,
+        )
+        for index, interaction in enumerate(selected.values(), start=1)
+    )
+
+
 def _allowed_atom_center_candidate(
     atom: int,
     center: InteractionCenterRecord,
@@ -698,9 +1111,7 @@ def _allowed_atom_center_candidate(
         return False
     atom_symbol = _atom_symbol(atom_symbols, atom)
     if _is_metal_symbol(atom_symbol):
-        return center.kind in {"BOND_CENTER", "RING_CENTER"}
-    if atom_symbol == "H":
-        return center.kind == "RING_CENTER"
+        return center.kind in {"BOND_CENTER", "RING_CENTER", "HAPTIC_CENTER"}
     return False
 
 
@@ -709,7 +1120,7 @@ def _allow_bonded_atom_center_interaction(
     center: InteractionCenterRecord,
     atom_symbols: tuple[str, ...],
 ) -> bool:
-    if center.kind not in {"BOND_CENTER", "RING_CENTER"}:
+    if center.kind not in {"BOND_CENTER", "RING_CENTER", "HAPTIC_CENTER"}:
         return False
     if not _is_metal_symbol(_atom_symbol(atom_symbols, atom)):
         return False
@@ -727,7 +1138,7 @@ def _suppress_ring_redundant_bond_center_interactions(
     ring_atoms_by_metal: dict[int, list[frozenset[int]]] = {}
     for interaction in interactions:
         center = center_by_id.get(interaction.center_id)
-        if center is None or center.kind != "RING_CENTER":
+        if center is None or center.kind not in {"RING_CENTER", "HAPTIC_CENTER"}:
             continue
         if not _is_metal_symbol(_atom_symbol(atom_symbols, interaction.atom)):
             continue
@@ -759,6 +1170,7 @@ def _suppress_ring_redundant_bond_center_interactions(
             center_id=interaction.center_id,
             score=interaction.score,
             source=interaction.source,
+            effective_order=interaction.effective_order,
         )
         for index, interaction in enumerate(filtered, start=1)
     )
@@ -773,7 +1185,7 @@ def _atom_center_score(atom: int, center: InteractionCenterRecord, coords: np.nd
         return 0.0
     spread = float((np.max(distances) - np.min(distances)) / mean_distance)
     center_distance = float(np.linalg.norm(atom_coord - np.asarray(center.center)))
-    if center.kind == "RING_CENTER":
+    if center.kind in {"RING_CENTER", "HAPTIC_CENTER"}:
         if spread > 0.12 or center_distance > 4.0:
             return 0.0
         return max(0.0, 1.0 - spread / 0.12) * max(0.0, 1.0 - center_distance / 4.0)
@@ -841,6 +1253,46 @@ def _frame(
     s_axis = _unit(np.cross(p_axis, q_axis))
     frame = np.column_stack([p_axis, q_axis, s_axis])
     return tuple(tuple(float(value) for value in frame[:, axis]) for axis in range(3))
+
+
+def fragment_local_frame(
+    coordinates_angstrom: np.ndarray,
+    atoms: tuple[int, ...],
+) -> tuple[tuple[float, float, float], ...]:
+    """Return the canonical topology-site frame for one one-based atom set.
+
+    This is the public, shared entry point for ORACLE contract builders.  It
+    deliberately delegates to the same frame kernel used by interaction
+    centers so site serialization and pose-candidate construction cannot
+    silently choose different anchors.
+    """
+
+    coords = np.asarray(coordinates_angstrom, dtype=float)
+    if coords.ndim != 2 or coords.shape[1] != 3 or np.any(~np.isfinite(coords)):
+        raise ValueError("fragment coordinates must be finite (natoms, 3)")
+    members = tuple(int(atom) for atom in atoms)
+    if not members or len(set(members)) != len(members):
+        raise ValueError("fragment frame requires unique one-based atoms")
+    if min(members) < 1 or max(members) > len(coords):
+        raise ValueError("fragment frame atom lies outside the geometry")
+    return _frame(coords, members)
+
+
+def fragment_frame_anchor_atoms(
+    coordinates_angstrom: np.ndarray,
+    atoms: tuple[int, ...],
+) -> tuple[int, ...]:
+    """Return the canonical one- or two-atom anchors used by local frames."""
+
+    coords = np.asarray(coordinates_angstrom, dtype=float)
+    members = tuple(int(atom) for atom in atoms)
+    if not members or len(set(members)) != len(members):
+        raise ValueError("fragment anchors require unique one-based atoms")
+    if min(members) < 1 or max(members) > len(coords):
+        raise ValueError("fragment anchor lies outside the geometry")
+    if len(members) == 1:
+        return members
+    return _frame_anchor_atoms(coords, members)
 
 
 def _frame_rank(coords: np.ndarray, atoms: tuple[int, ...]) -> int:

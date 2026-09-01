@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .definition import GICDefinition
+from .models import GICDefinition
 from .policy import SPECIAL_REDUCTION_CLASS, primitive_reduction_class, primitive_symmetry_block
 
 

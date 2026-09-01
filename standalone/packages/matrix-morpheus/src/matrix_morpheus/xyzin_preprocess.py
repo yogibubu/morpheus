@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from matrix_core.xyzin_geometry import replace_xyzin_geometry
+from matrix_chem.xyzin_geometry import replace_xyzin_geometry
 
 from .contracts import IsotopologueObservation
 from .geometry_input import read_geometry_input
