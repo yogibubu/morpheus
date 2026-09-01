@@ -54,7 +54,7 @@
     "n_zero_match_predicates": 0
   },
   "reproducibility": {
-    "initial_geometry": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/xyzin_chpred_kra_broad",
+    "initial_geometry": "data/working/semiexp/camphor_bdpcs3/xyzin_chpred_kra_broad",
     "initial_geometry_sha256": "69f4d84352d9617060406efb2b41464516c97f3d9f3815e63481666dae89426a",
     "numpy": "2.4.2",
     "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
@@ -86,7 +86,7 @@
       "robust_scale": 0.0,
       "rotational_components": "ABC"
     },
-    "result_manifest": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/ref_no_kra_full_validation/semiexp_manifest.json",
+    "result_manifest": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/ref_no_kra_full_validation/semiexp_manifest.json",
     "result_manifest_sha256": "4c54d960508775a5562a68ba8971d4774bbb6b68c75737b028b76a56bfef54dd",
     "validation_options": {
       "coordinate_check": true,

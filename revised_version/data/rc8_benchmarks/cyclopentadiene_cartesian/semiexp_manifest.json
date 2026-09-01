@@ -17,14 +17,14 @@
     "fortran77_source": "fortran/semiexp/semiexp_core.f",
     "solver": "python-orchestrated adaptive SVD More-Hebden trust-region least-squares with QR/Cauchy fallbacks"
   },
-  "framework": "MATRIX",
+  "framework": "MORPHEUS",
   "input_sha256": {
     "initial_geometry": "5c1e458bffc35192137c5b15f4346c1d6bada6522358668123842322848f022a"
   },
   "inputs": {
-    "initial_geometry": "/Users/vincenzobarone/Documents/git/manuscripts/morpheus/standalone/benchmarks/semiexp_msr/inputs/cyclopentadiene/parent.xyz"
+    "initial_geometry": "standalone/benchmarks/semiexp_msr/inputs/cyclopentadiene/parent.xyz"
   },
-  "matrix_version": "0.1.0rc8",
+  "morpheus_version": "0.1.0rc8",
   "messages": [
     "Semiexperimental workflow is orchestrated in Python.",
     "Cartesian symmetry coordinates use direct Cartesian displacements.",

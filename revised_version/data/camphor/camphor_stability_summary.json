@@ -1,7 +1,7 @@
 {
-  "suite": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full",
-  "xyzin": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/xyzin_chpred_kra_broad",
-  "reference": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/ref_no_kra_full_validation",
+  "suite": "data/working/semiexp/camphor_bdpcs3/stability_suite_full",
+  "xyzin": "data/working/semiexp/camphor_bdpcs3/xyzin_chpred_kra_broad",
+  "reference": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/ref_no_kra_full_validation",
   "variants": [
     {
       "variant": "ref_no_kra_full_validation",
@@ -41,7 +41,7 @@
       "dihedral_shift_vs_ref_max_deg": 0.0,
       "dihedral_shift_vs_ref_rms_deg": 0.0,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/ref_no_kra_full_validation"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/ref_no_kra_full_validation"
     },
     {
       "variant": "coord_cartesian_symmetry",
@@ -81,7 +81,7 @@
       "dihedral_shift_vs_ref_max_deg": 2.0000072709080996e-09,
       "dihedral_shift_vs_ref_rms_deg": 8.002417074897193e-10,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/coord_cartesian_symmetry"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/coord_cartesian_symmetry"
     },
     {
       "variant": "observable_rotational_constants",
@@ -121,7 +121,7 @@
       "dihedral_shift_vs_ref_max_deg": 8.750000120016921e-07,
       "dihedral_shift_vs_ref_rms_deg": 2.8887333835028016e-07,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/observable_rotational_constants"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/observable_rotational_constants"
     },
     {
       "variant": "components_AB",
@@ -161,7 +161,7 @@
       "dihedral_shift_vs_ref_max_deg": 0.020816555999999764,
       "dihedral_shift_vs_ref_rms_deg": 0.005077205473313618,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/components_AB"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/components_AB"
     },
     {
       "variant": "components_AC",
@@ -201,7 +201,7 @@
       "dihedral_shift_vs_ref_max_deg": 0.04282180600000629,
       "dihedral_shift_vs_ref_rms_deg": 0.013636660726273482,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/components_AC"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/components_AC"
     },
     {
       "variant": "components_BC",
@@ -241,7 +241,7 @@
       "dihedral_shift_vs_ref_max_deg": 0.023621089000016582,
       "dihedral_shift_vs_ref_rms_deg": 0.008730466097097728,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/components_BC"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/components_BC"
     },
     {
       "variant": "robust_huber",
@@ -281,7 +281,7 @@
       "dihedral_shift_vs_ref_max_deg": 0.006424823999992668,
       "dihedral_shift_vs_ref_rms_deg": 0.0024151193274056185,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/robust_huber"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/robust_huber"
     },
     {
       "variant": "robust_soft_l1",
@@ -321,7 +321,7 @@
       "dihedral_shift_vs_ref_max_deg": 1.961499998515137e-05,
       "dihedral_shift_vs_ref_rms_deg": 5.886084962342794e-06,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/robust_soft_l1"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/robust_soft_l1"
     },
     {
       "variant": "all_sigmas_x0p5",
@@ -361,7 +361,7 @@
       "dihedral_shift_vs_ref_max_deg": 0.005844056999990244,
       "dihedral_shift_vs_ref_rms_deg": 0.001932274342244057,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/all_sigmas_x0p5"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/all_sigmas_x0p5"
     },
     {
       "variant": "all_sigmas_x2",
@@ -401,7 +401,7 @@
       "dihedral_shift_vs_ref_max_deg": 0.0036180320000198662,
       "dihedral_shift_vs_ref_rms_deg": 0.0010572224691891873,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/all_sigmas_x2"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/all_sigmas_x2"
     },
     {
       "variant": "all_sigmas_x3",
@@ -441,7 +441,7 @@
       "dihedral_shift_vs_ref_max_deg": 0.0072559234000095785,
       "dihedral_shift_vs_ref_rms_deg": 0.0023517206582134146,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/all_sigmas_x3"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/all_sigmas_x3"
     },
     {
       "variant": "ch_bonds_x0p5",
@@ -481,7 +481,7 @@
       "dihedral_shift_vs_ref_max_deg": 0.00012450899998839304,
       "dihedral_shift_vs_ref_rms_deg": 4.107368141822281e-05,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/ch_bonds_x0p5"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/ch_bonds_x0p5"
     },
     {
       "variant": "ch_bonds_x2",
@@ -521,7 +521,7 @@
       "dihedral_shift_vs_ref_max_deg": 0.0004897339999843098,
       "dihedral_shift_vs_ref_rms_deg": 0.00016169906142510275,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/ch_bonds_x2"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/ch_bonds_x2"
     },
     {
       "variant": "h_angles_dihedrals_x0p5",
@@ -561,7 +561,7 @@
       "dihedral_shift_vs_ref_max_deg": 0.010989366180012894,
       "dihedral_shift_vs_ref_rms_deg": 0.005639927150928175,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/h_angles_dihedrals_x0p5"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/h_angles_dihedrals_x0p5"
     },
     {
       "variant": "h_angles_dihedrals_x2",
@@ -601,7 +601,7 @@
       "dihedral_shift_vs_ref_max_deg": 0.017181389159986793,
       "dihedral_shift_vs_ref_rms_deg": 0.006529323252630784,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/h_angles_dihedrals_x2"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/h_angles_dihedrals_x2"
     },
     {
       "variant": "no_h_dihedral_predicates",
@@ -641,7 +641,7 @@
       "dihedral_shift_vs_ref_max_deg": 25.01588962048001,
       "dihedral_shift_vs_ref_rms_deg": 9.790295135732523,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/no_h_dihedral_predicates"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/no_h_dihedral_predicates"
     },
     {
       "variant": "no_dihedral_predicates",
@@ -681,7 +681,7 @@
       "dihedral_shift_vs_ref_max_deg": 19.571184076999998,
       "dihedral_shift_vs_ref_rms_deg": 7.812540366060996,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/no_dihedral_predicates"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/no_dihedral_predicates"
     },
     {
       "variant": "no_h_predicates",
@@ -721,7 +721,7 @@
       "dihedral_shift_vs_ref_max_deg": 52.60972708300005,
       "dihedral_shift_vs_ref_rms_deg": 22.13139618713691,
       "accepted_reference_quality": 0,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/no_h_predicates"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/no_h_predicates"
     },
     {
       "variant": "heavy_frame_only",
@@ -761,7 +761,7 @@
       "dihedral_shift_vs_ref_max_deg": 52.60972708300005,
       "dihedral_shift_vs_ref_rms_deg": 22.13139618713691,
       "accepted_reference_quality": 0,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/heavy_frame_only"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/heavy_frame_only"
     },
     {
       "variant": "bonds_angles_only",
@@ -801,7 +801,7 @@
       "dihedral_shift_vs_ref_max_deg": 19.571184076999998,
       "dihedral_shift_vs_ref_rms_deg": 7.812540366060996,
       "accepted_reference_quality": 1,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/bonds_angles_only"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/bonds_angles_only"
     },
     {
       "variant": "bonds_only",
@@ -841,7 +841,7 @@
       "dihedral_shift_vs_ref_max_deg": NaN,
       "dihedral_shift_vs_ref_rms_deg": NaN,
       "accepted_reference_quality": 0,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/bonds_only"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/bonds_only"
     },
     {
       "variant": "kraitchman_conservative_autostabilized",
@@ -881,7 +881,7 @@
       "dihedral_shift_vs_ref_max_deg": NaN,
       "dihedral_shift_vs_ref_rms_deg": NaN,
       "accepted_reference_quality": 0,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/kraitchman_conservative_autostabilized"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/kraitchman_conservative_autostabilized"
     },
     {
       "variant": "kraitchman_partial_autostabilized",
@@ -921,7 +921,7 @@
       "dihedral_shift_vs_ref_max_deg": 112.99669214724001,
       "dihedral_shift_vs_ref_rms_deg": 38.05637693284288,
       "accepted_reference_quality": 0,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/kraitchman_partial_autostabilized"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/kraitchman_partial_autostabilized"
     },
     {
       "variant": "kraitchman_partial_cartesian_autostabilized",
@@ -961,7 +961,7 @@
       "dihedral_shift_vs_ref_max_deg": 80.89289742540001,
       "dihedral_shift_vs_ref_rms_deg": 25.724234333674563,
       "accepted_reference_quality": 0,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/kraitchman_partial_cartesian_autostabilized"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/kraitchman_partial_cartesian_autostabilized"
     },
     {
       "variant": "kraitchman_partial_no_auto",
@@ -1001,7 +1001,7 @@
       "dihedral_shift_vs_ref_max_deg": 112.99669214724001,
       "dihedral_shift_vs_ref_rms_deg": 38.05637693284288,
       "accepted_reference_quality": 0,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/kraitchman_partial_no_auto"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/kraitchman_partial_no_auto"
     },
     {
       "variant": "bdpcs3_plus_kraitchman_partial_tight",
@@ -1041,7 +1041,7 @@
       "dihedral_shift_vs_ref_max_deg": 0.2548755690000064,
       "dihedral_shift_vs_ref_rms_deg": 0.09184791882068101,
       "accepted_reference_quality": 0,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/bdpcs3_plus_kraitchman_partial_tight"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/bdpcs3_plus_kraitchman_partial_tight"
     },
     {
       "variant": "bdpcs3_plus_kraitchman_partial_broad",
@@ -1081,7 +1081,7 @@
       "dihedral_shift_vs_ref_max_deg": 0.029016607000016847,
       "dihedral_shift_vs_ref_rms_deg": 0.010512373270596094,
       "accepted_reference_quality": 0,
-      "outdir": "/Users/vincenzobarone/MATRIX/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/bdpcs3_plus_kraitchman_partial_broad"
+      "outdir": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/bdpcs3_plus_kraitchman_partial_broad"
     }
   ],
   "predicate_sets": [

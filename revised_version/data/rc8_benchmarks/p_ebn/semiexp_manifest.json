@@ -2,17 +2,17 @@
   "architecture": "arm64",
   "backend": {
     "b_matrix": "analytic from frozen GIC definition",
-    "backtransform": "LINK hybrid typed SONIC with adaptive line-search and generic fallback",
+    "backtransform": "typed SONIC with adaptive line-search and generic fallback",
     "coordinate_model": "gicforge-frozen-definition",
     "fortran77_role": "validated numerical kernels only",
     "fortran77_source": "fortran/semiexp/semiexp_core.f",
     "solver": "python-orchestrated adaptive SVD More-Hebden trust-region least-squares with QR/Cauchy fallbacks"
   },
   "command": [
-    "/Users/vincenzobarone/Documents/git/software/MATRIX/packages/matrix-morpheus/src/matrix_morpheus/cli.py",
+    "morpheus/src/matrix_morpheus/cli.py",
     "fit",
     "--job",
-    "/Users/vincenzobarone/Documents/git/manuscripts/morpheus/standalone/benchmarks/semiexp_msr/inputs/legacy_msr_import/p-EBN.msr.inp",
+    "standalone/benchmarks/semiexp_msr/inputs/legacy_msr_import/p-EBN.msr.inp",
     "--outdir",
     "/tmp/morpheus-rc8-replay.iBLMQX/pebn_cli_current/run",
     "--backend",
@@ -35,17 +35,17 @@
     "fortran77_source": "fortran/semiexp/semiexp_core.f",
     "solver": "python-orchestrated adaptive SVD More-Hebden trust-region least-squares with QR/Cauchy fallbacks"
   },
-  "framework": "MATRIX",
+  "framework": "MORPHEUS",
   "input_sha256": {
     "initial_geometry": "7acdfa2b5fe9d2cc789b9c47cc2d9b6ca8c12af43be0e086c91fb62adbf1d063"
   },
   "inputs": {
     "initial_geometry": "/tmp/morpheus-rc8-replay.iBLMQX/pebn_cli_current/run/xyzin"
   },
-  "matrix_version": "0.1.0rc8",
+  "morpheus_version": "0.1.0rc8",
   "messages": [
     "Semiexperimental workflow is orchestrated in Python.",
-    "GIC displacements use LINK's coordinate-aware hybrid SONIC back-transformation.",
+    "GIC displacements use the coordinate-aware hybrid SONIC back-transformation.",
     "Fortran77 semiexp code is kept as an independent validated numerical-kernel layer."
   ],
   "operating_system": "Darwin",
