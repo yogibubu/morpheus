@@ -1,0 +1,112 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{setspace}
+\usepackage{hyperref}
+\hypersetup{hidelinks}
+\setstretch{1.08}
+
+\title{Response to the Reviewer\\[0.4em]
+\large Manuscript JCP26-AR-03161}
+\author{Vincenzo Barone}
+\date{}
+
+\begin{document}
+\maketitle
+
+Dear Editor and Reviewer,
+
+Thank you for the careful and positive evaluation of our manuscript,
+``Algorithmic Construction and Exploitation of Topology-Constrained Refinement
+Models for Semiexperimental Equilibrium Structures.'' We respond below to the
+reviewer's comments in full. Textual changes are shown in red in the marked
+manuscript. Changes to figure artwork are not colored red, but are described
+explicitly in the corresponding responses.
+
+\section*{Reviewer \#1}
+
+\subsection*{General assessment}
+
+\paragraph{Reviewer comment.}
+\emph{The manuscript ``Algorithmic Construction and Exploitation of
+Topology-Constrained Refinement Models for Semiexperimental Equilibrium
+Structures'' introduces a significant methodological advancement in the field
+of semiexperimental equilibrium structure refinement. The determination of
+$r_e^{\mathrm{SE}}$ structures has traditionally been an ``art'' reserved for
+experts due to the complexities of coordinate selection, symmetry handling,
+and rank deficiency. MORPHEUS addresses these issues by providing a
+reproducible, graph-driven framework that automates model construction. The
+validation on systems ranging from glycine to a 49-atom testosterone molecule
+demonstrates its robustness. The main strengths are the reproducibility,
+handling of incomplete data, validation and clarity of the results and work.
+This work fits perfectly within the scope of JCP as it provides a rigorous
+physical chemistry tool that enhances the reliability of structural
+parameters. I recommend its publication as it is.}
+
+\paragraph{Response.}
+We thank the reviewer for this positive assessment. We are pleased that the
+reproducibility, treatment of incomplete data, validation strategy, and clarity
+of the presentation were found to be strengths of the work. We have retained
+the methodological scope and the benchmark set while making the specific
+clarifications and presentation changes requested below.
+
+\subsection*{Comment 1: Computational cost}
+
+\paragraph{Reviewer comment.}
+\emph{Computational cost: While the ``testosterone scale check'' is impressive,
+a brief mention of the typical computational overhead added by the MORPHEUS
+framework compared to traditional manual refinement would be informative for
+potential users.}
+
+\paragraph{Response.}
+We agree that this information is useful for potential users. We now state
+that topology perception, coordinate generation, projection, rank auditing,
+and the subsequent refinement are typically completed in seconds on a
+laptop-class CPU for the systems considered here, including the 49-atom
+testosterone case. We also explain that the sparse Wilson $\mathbf{B}$ matrix
+reduces memory use and the cost of the associated linear-algebra operations,
+and that no additional quantum-chemical calculation is required by the
+model-generation step. The statement is deliberately expressed as a typical
+range of practical behavior rather than as a hardware-independent benchmark.
+
+\paragraph{Change in the manuscript.}
+A new paragraph was added to the workflow discussion on page~11 of the
+revised manuscript.
+
+\subsection*{Comment 2: Figure 1 label}
+
+\paragraph{Reviewer comment.}
+\emph{In Figure 1, the label ``algorithmic model generation'' overlaps with an
+arrow. I suggest repositioning the text to improve legibility.}
+
+\paragraph{Response.}
+We agree and have redesigned the label placement. The label is now set on two
+lines and positioned adjacent to the vertical arrow, without covering the
+arrow or any other graphical element. This is a graphical correction and is
+therefore not marked in red in the marked manuscript.
+
+\paragraph{Change in the manuscript.}
+The revised Figure~1 appears on page~3.
+
+\subsection*{Comment 3: Figure 5 size}
+
+\paragraph{Reviewer comment.}
+\emph{Figure 5 is currently too small to be legible. I recommend either
+increasing the font size or expanding the figure to a double-column format.}
+
+\paragraph{Response.}
+We agree. Figure~5 has been expanded to a double-column figure and its labels
+and annotations have been enlarged to improve readability at normal manuscript
+size. This is a graphical correction and is therefore not marked in red in the
+marked manuscript.
+
+\paragraph{Change in the manuscript.}
+The revised Figure~5 appears on page~13.
+
+We hope that these revisions address all of the reviewer's suggestions and
+improve the clarity and usability of the manuscript.
+
+Sincerely,
+
+Vincenzo Barone
+
+\end{document}

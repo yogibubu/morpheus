@@ -1,0 +1,159 @@
+{
+  "influence": {
+    "experimental": {
+      "max_abs_studentized_residual": 0.2966909358181284,
+      "max_chi_square_contribution": 0.08059004301191242,
+      "max_cooks_distance": 0.0001082864801618465,
+      "max_leverage": 0.08804029124862217,
+      "rows": 36,
+      "weight_fraction": 4.736687880440703e-05
+    },
+    "predicate": {
+      "max_abs_studentized_residual": 0.5557661947138676,
+      "max_chi_square_contribution": 0.07694397917342713,
+      "max_cooks_distance": 6.579493072578698,
+      "max_leverage": 0.9997834228887282,
+      "rows": 178,
+      "weight_fraction": 0.9999526331211958
+    }
+  },
+  "leave_one_out": {
+    "max_cartesian_max_shift_angstrom": 5.884831663923416e-05,
+    "max_cartesian_rms_shift_angstrom": 2.1395034217222217e-05,
+    "max_condition_number": 71.05484067147381,
+    "max_omitted_rotational_max_abs_MHz": 0.3101490930723685,
+    "max_omitted_rotational_rms_MHz": 0.1920722490510435,
+    "min_rank": 75,
+    "rows": 12
+  },
+  "model": {
+    "components": [
+      "Ia",
+      "Ib",
+      "Ic"
+    ],
+    "condition_number": 71.31528213120208,
+    "convergence_reason": "objective_tolerance",
+    "coordinate_model": "gic",
+    "max_abs_correlation": 0.6125829886271615,
+    "minimum_hessian_eigenvalue": 34471.16111335253,
+    "n_optimized_parameters": 75,
+    "observable": "moments",
+    "rank": 75,
+    "reduced_chi_square": 0.005745801238019878,
+    "rotational_rms_MHz": 0.07881264807953468,
+    "stationary_point": "minimum",
+    "weighted_rms": 0.06109080005093548
+  },
+  "predicate_audit": {
+    "fixed_parameters": [],
+    "hydrogen_blocked": false,
+    "n_hydrogen_predicates": 114,
+    "n_kraitchman_predicates": 0,
+    "n_predicates": 178,
+    "n_zero_match_predicates": 0
+  },
+  "reproducibility": {
+    "initial_geometry": "data/working/semiexp/camphor_bdpcs3/xyzin_chpred_kra_broad",
+    "initial_geometry_sha256": "69f4d84352d9617060406efb2b41464516c97f3d9f3815e63481666dae89426a",
+    "numpy": "2.4.2",
+    "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+    "predicate_sha256": "de6cd8013f9d17fc743273c07e0b15070ef9fd6d9208534d10310385df9c22aa",
+    "python": "3.13.11 | packaged by Anaconda, Inc. | (main, Dec 10 2025, 21:21:08) [Clang 20.1.8 ]",
+    "request": {
+      "coordinate_model": "gic",
+      "fixed_parameters": [],
+      "leave_one_out": true,
+      "n_observations": 12,
+      "n_parameter_classes": 0,
+      "n_qm_predicates": 178,
+      "observable": "moments",
+      "observation_labels": [
+        "parent",
+        "iso_002",
+        "iso_003",
+        "iso_004",
+        "iso_005",
+        "iso_006",
+        "iso_007",
+        "iso_008",
+        "iso_009",
+        "iso_010",
+        "iso_011",
+        "iso_012"
+      ],
+      "robust_loss": "none",
+      "robust_scale": 0.0,
+      "rotational_components": "ABC"
+    },
+    "result_manifest": "data/working/semiexp/camphor_bdpcs3/stability_suite_full/runs/ref_no_kra_full_validation/semiexp_manifest.json",
+    "result_manifest_sha256": "4c54d960508775a5562a68ba8971d4774bbb6b68c75737b028b76a56bfef54dd",
+    "validation_options": {
+      "coordinate_check": true,
+      "geometry_rmsd_warning_angstrom": 0.001,
+      "huber_check": true,
+      "leave_predicate_groups": true,
+      "max_atom_shift_warning_angstrom": 0.003,
+      "max_predicate_groups": 20,
+      "multistart": 5,
+      "multistart_sigma_angstrom": 0.001,
+      "predicate_scan_scales": [
+        0.5,
+        2.0
+      ],
+      "random_seed": 20260703
+    }
+  },
+  "robustness_runs": {
+    "max_atom_shift_angstrom": 0.9346928133117086,
+    "max_condition_number": 248390.61818442005,
+    "max_geometry_rmsd_angstrom": 0.3039036406596666,
+    "max_rotational_rms_MHz": 0.13883499427164658,
+    "n_failed_stress_runs": 0,
+    "n_runs": 26,
+    "n_successful_stress_runs": 25,
+    "requested": {
+      "coordinate_check": true,
+      "geometry_rmsd_warning_angstrom": 0.001,
+      "huber_check": true,
+      "leave_predicate_groups": true,
+      "max_atom_shift_warning_angstrom": 0.003,
+      "max_predicate_groups": 20,
+      "multistart": 5,
+      "multistart_sigma_angstrom": 0.001,
+      "predicate_scan_scales": [
+        0.5,
+        2.0
+      ],
+      "random_seed": 20260703
+    }
+  },
+  "schema": "oracle.semiexp.final_validation.v1",
+  "structural_uncertainty": {
+    "ch_bond_sigma_A": {
+      "count": 16,
+      "max": 0.0029996751167415702,
+      "mean": 0.0029989716272275555
+    },
+    "h_angle_sigma_deg": {
+      "count": 36,
+      "max": 0.25658240349372574,
+      "mean": 0.2010532740725299
+    },
+    "heavy_angle_sigma_deg": {
+      "count": 21,
+      "max": 0.22448934196769715,
+      "mean": 0.15102299210119102
+    },
+    "heavy_bond_sigma_A": {
+      "count": 12,
+      "max": 0.002814625105946404,
+      "mean": 0.00257810111464138
+    },
+    "xh_bond_sigma_A": {
+      "count": 0,
+      "max": 0.0,
+      "mean": 0.0
+    }
+  }
+}

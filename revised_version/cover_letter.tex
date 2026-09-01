@@ -1,0 +1,62 @@
+\documentclass[11pt]{letter}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\emergencystretch=2em
+\hypersetup{
+  hidelinks,
+  pdftitle={Cover Letter - MORPHEUS manuscript},
+  pdfauthor={Vincenzo Barone},
+  pdfsubject={Submission to The Journal of Chemical Physics}
+}
+
+\signature{Vincenzo Barone}
+\address{Vincenzo Barone\\
+INSTM, National Interuniversity Consortium for Materials Science and Technology\\
+via G. Giusti 9, 50121 Firenze, Italy\\
+\href{mailto:vincebarone52@gmail.com}{vincebarone52@gmail.com}}
+
+\begin{document}
+
+\begin{letter}{Editor\\
+The Journal of Chemical Physics}
+
+\opening{Dear Editor,}
+
+Please find enclosed the manuscript ``Algorithmic Construction and Exploitation
+of Topology-Constrained Refinement Models for Semiexperimental Equilibrium
+Structures,'' submitted as an Article to \emph{The Journal of Chemical
+Physics}.
+
+The manuscript introduces MORPHEUS, a framework that turns semiexperimental
+refinement-model formulation into a reproducible topology-, symmetry-, and
+rank-audited procedure. Starting from non-redundant SONIC coordinate contracts,
+MORPHEUS generates the supported active space, applies constraints, predicates,
+and parameter classes consistently, and propagates uncertainties to chemically
+interpretable structural parameters.
+
+The work addresses a general problem at the interface of rotational
+spectroscopy, molecular structure determination, and quantum chemistry: how to
+combine precise experimental data, computed vibrational and electronic
+corrections, topology, symmetry, and external reference information in a
+controlled inverse model. Validation spans acyclic, cyclic, planar, fused,
+bridged, and flexible molecules. A 49-atom testosterone case further shows that
+accurate equilibrium geometries, accelerated vibrational corrections, and
+generated class-constrained refinement models can be chained when isotope-rich
+semiexperimental analyses are not practical.
+
+The source, runnable examples, benchmark outputs, and final-validation data are
+distributed with the public MORPHEUS 0.1.0rc8 release. The Supporting
+Information provides the numerical diagnostics and audit trails. The companion
+SMITH/SONIC coordinate methodology is available as
+\href{https://arxiv.org/abs/2607.16550}{arXiv:2607.16550}.
+
+This manuscript is original, has not been published previously, and is not
+under consideration elsewhere. I confirm that there are no conflicts of
+interest to declare.
+
+\closing{Sincerely,}
+
+\end{letter}
+
+\end{document}
