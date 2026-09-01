@@ -7,13 +7,14 @@ Equilibrium Structures*.
 It contains:
 
 - the manuscript and Supporting Information sources;
-- the standalone MORPHEUS 0.1.0rc6 source distribution in `standalone/`;
+- the standalone MORPHEUS 0.1.0rc8 source distribution in `standalone/`;
 - runnable semiexperimental examples and manuscript benchmark inputs;
 - machine-readable camphor validation data in `data/camphor/`;
 - generated tables, figures, and numerical audit material used in the paper.
 
-The standalone snapshot was exported from MATRIX revision
-`187ea913261fc8a20b4260b10175b0f37d74c87d`. It contains only the components
+The standalone snapshot is the MORPHEUS 0.1.0rc8 source distribution on the
+public `main` branch. It was exported from MATRIX revision
+`5352e8dd924ec04ba1a1f48563f521eaeaf8f574` and contains only the components
 needed to build and run MORPHEUS; the private development monorepo is not
 required.
 
